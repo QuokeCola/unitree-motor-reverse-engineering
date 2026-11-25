@@ -1,17 +1,16 @@
 .venv/
 __pycache__/
 *.pyc
-.idea/
-# firmware images and large raw captures stay local
-firmware/*
-!firmware/.gitkeep
-captures/*
-!captures/.gitkeep
 *.egg-info/
 .pytest_cache/
-*.asv
-sdk/cpp/build/
+.idea/
+# build outputs
+cpp/build/
+docs/api/
 *.mexa64
 *.mexw64
 *.mexmaci64
 *.mexmaca64
+*.asv
+# raw bus recordings and motion logs stay local
+python/tools/captures/

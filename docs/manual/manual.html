@@ -388,7 +388,7 @@ reproduced with frames of our own. <span class="tag">inferred</span> The control
 </table>
 <p>The five angles sent were +153.00&#176;, +129.00&#176;, +150.00&#176;, &#8722;59.99&#176; and +113.00&#176; for IDs 0-4, and at that moment each
 motor's position reading equalled its angle &#215; 524,288 / 360&#176; to within 0.01 %. The 6-byte constant was the same for
-all five motors; it is recorded in the project notes, and whether it differs between robots or firmware versions is
+all five motors; it is recorded in the lab notes (<code>docs/lab_notes.md</code>), and whether it differs between robots or firmware versions is
 unknown. Setting a zero is presumably permanent; do not send mode 6 without knowing the joint's true angle.</p>
 <p>Without recalibrating, a zero can also be kept in software: store the reading at a known pose and, after each power-on,
 move the stored value by whole output turns to match the reading.</p>

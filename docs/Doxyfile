@@ -1,0 +1,45 @@
+# Doxygen configuration for the API reference of all three interfaces.
+# Run from the top of the repository:  doxygen docs/Doxyfile
+# Output: docs/api/html/index.html (not tracked by git).
+
+PROJECT_NAME           = "G1 joint motor SDK"
+PROJECT_BRIEF          = "Unofficial drivers for Unitree G1 joint motors (Python, C++, MATLAB)"
+OUTPUT_DIRECTORY       = docs/api
+USE_MDFILE_AS_MAINPAGE = README.md
+
+INPUT                  = README.md \
+                         cpp/include \
+                         cpp/src \
+                         cpp/tests \
+                         python/g1_joint_motor_sdk \
+                         python/tests \
+                         matlab \
+                         docs/doxygen_matlab_filter.py
+FILE_PATTERNS          = *.h *.cc *.py *.m *.md
+RECURSIVE              = YES
+EXCLUDE_PATTERNS       = */build/* */__pycache__/* */examples/*
+
+# MATLAB is read through a small filter and treated as C++.
+EXTENSION_MAPPING      = m=C++
+FILTER_PATTERNS        = "*.m=python3 docs/doxygen_matlab_filter.py"
+FILTER_SOURCE_FILES    = NO
+
+# Python docstrings start with """! so that Doxygen commands are processed.
+PYTHON_DOCSTRING       = NO
+
+EXTRACT_ALL            = NO
+EXTRACT_PRIVATE        = YES
+EXTRACT_STATIC         = YES
+EXTRACT_ANON_NSPACES   = YES
+HIDE_UNDOC_MEMBERS     = NO
+SORT_MEMBER_DOCS       = NO
+JAVADOC_AUTOBRIEF      = NO
+
+GENERATE_HTML          = YES
+GENERATE_LATEX         = NO
+HAVE_DOT               = NO
+
+QUIET                  = YES
+WARNINGS               = YES
+WARN_IF_UNDOCUMENTED   = YES
+WARN_NO_PARAMDOC       = NO
