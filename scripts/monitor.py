@@ -251,7 +251,7 @@ class Window(QtWidgets.QWidget):
             ("vel", [("measured", "y")]),
             ("acc", [("from velocity", "m")]),
             ("tau", [("measured", "y")]),
-            ("temp", [("sensor A", "r"), ("sensor B", (255, 150, 0))]),
+            ("temp", [("coil", "r"), ("shell", (255, 150, 0))]),
         ]
         prev = None
         for row, (name, lines) in enumerate(specs):
@@ -287,7 +287,7 @@ class Window(QtWidgets.QWidget):
         self.plots["vel"].setLabel("left", "velocity", units="rad/s" if si else "counts")
         self.plots["acc"].setLabel("left", "acceleration", units="rad/s²" if si else "counts/s")
         self.plots["tau"].setLabel("left", "torque", units="N·m" if si else "counts")
-        self.plots["temp"].setLabel("left", "temperature (unconfirmed)", units="°C")
+        self.plots["temp"].setLabel("left", "temperature", units="°C")
 
     def refresh(self) -> None:
         with self.bus.lock:

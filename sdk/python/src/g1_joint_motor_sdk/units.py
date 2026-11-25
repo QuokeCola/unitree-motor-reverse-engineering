@@ -1,9 +1,13 @@
 """Conversion between raw counts and physical units.
 
-ASSUMED scales, taken from Unitree's public GO-M8010-6 protocol. Only the ratio between
-the position and velocity scales has been checked against G1 data (measured 114-124
-against the expected 128). All values refer to the ROTOR, before the gearbox; the gear
-ratios of the G1 joints are not known here.
+Scales follow Unitree's public GO-M8010-6 protocol. How far each is confirmed on G1 motors:
+- position, 32768 counts per rotor turn: supported. After a restart the reading jumps by exactly
+  524,288 (16 x 32768) on one motor and 819,200 (25 x 32768) on another, i.e. whole output turns
+  of 16:1 and 25:1 gears.
+- velocity: follows from the position scale and the measured ratio of 128 position counts per
+  second per velocity count.
+- torque, 1/256 N*m per count: ASSUMED, not checked.
+All values refer to the ROTOR, before the gearbox. Use joints.Joint for output-shaft angles.
 """
 import math
 

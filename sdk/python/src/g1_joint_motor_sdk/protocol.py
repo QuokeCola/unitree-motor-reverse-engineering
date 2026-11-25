@@ -15,8 +15,13 @@ CMD_LEN = 20
 REPLY_LEN = 26
 BROADCAST_ID = 15      # broadcast in the public GO-M8010-6 protocol; never polled by this SDK
 
-MODE_IDLE = 0          # motor answers but applies no torque
+MODE_IDLE = 0          # commands ignored; joint passively braked (stops from speed in about 10 ms)
 MODE_RUN = 1           # motor runs its torque / position / velocity loop
+MODE_RESTART = 7       # motor restarts: silent for about 0.3 s, fault cleared, position re-referenced
+# Modes 3, 4 and 5 are accepted (the reply reports them) but ignore every command field:
+# 3 and 5 brake the joint like mode 0, 4 lets it free-wheel like mode 1 with a zero command.
+# Mode 2 is ignored. Mode 6 sets the position zero when it carries the calibration payload the
+# robot uses (see the protocol guide); with a zero payload it is ignored. Not sent by this SDK.
 
 
 def crc32_core(data: bytes) -> int:
@@ -83,8 +88,8 @@ class MotorState:
     tau: int               # torque, int16
     vel: int               # velocity, int16
     pos: int               # position, int32 (multi-turn)
-    temp_a: int            # looks like a temperature in deg C
-    temp_b: int            # second temperature, usually 1-2 below temp_a
+    temp_coil: int         # winding temperature, deg C (identified by the user; always >= temp_shell in our data)
+    temp_shell: int        # motor shell temperature, deg C
     voltage_raw: int       # bus voltage, 0.5 V per count
     error: int             # status / fault word: 0 in normal running. 0x8 seen latched on three bench
                            # motors after a hard stop from top speed; they then refuse run mode.
@@ -93,6 +98,16 @@ class MotorState:
     byte20: int            # unknown, 0 so far
     byte21: int            # unknown; changes every frame on two of the robot's arm motors
     raw: bytes = b""
+
+    @property
+    def temp_a(self) -> int:
+        """Old name of temp_coil."""
+        return self.temp_coil
+
+    @property
+    def temp_b(self) -> int:
+        """Old name of temp_shell."""
+        return self.temp_shell
 
     @property
     def fault(self) -> bool:
@@ -112,7 +127,7 @@ class MotorState:
         if struct.unpack_from("<I", frame, 22)[0] != crc32_core(frame[2:22]):   # header is not covered
             return None
         head, ta, tb, volt, tau, vel, pos, error, word18, b20, b21 = struct.unpack_from("<BBBBhhiIHBB", frame, 2)
-        return cls(id=head & 0x0F, mode=(head >> 4) & 0x07, tau=tau, vel=vel, pos=pos, temp_a=ta, temp_b=tb,
+        return cls(id=head & 0x0F, mode=(head >> 4) & 0x07, tau=tau, vel=vel, pos=pos, temp_coil=ta, temp_shell=tb,
                    voltage_raw=volt, error=error, word18=word18, byte20=b20, byte21=b21, raw=bytes(frame))
 
 

@@ -30,8 +30,8 @@ values moved between robot modes. Scales and units are not known yet.
 |---|---|---|---|
 | 0 | 2 | header | `FC EE` (public SDK uses `FD EE`) |
 | 2 | 1 | id / mode | bits 0-3 id, bits 4-6 mode the motor is in (0 or 1) |
-| 3 | 1 | temperature A? (uint8) | 33-39, rises about 3 over 5 min; likely deg C |
-| 4 | 1 | temperature B? (uint8) | tracks byte 3, 1-2 lower |
+| 3 | 1 | coil (winding) temperature, deg C (uint8) | 28-39 seen; rises about 3 over 5 min on the robot. Identification from the user (2026-11-25) |
+| 4 | 1 | shell temperature, deg C (uint8) | never above byte 3 in our data: 0-5 lower. 4-5 lower just after a cold power-on; equal to byte 3 right after a mode-7 restart |
 | 5 | 1 | bus voltage (uint8), 0.5 V/count | 96-97 on the robot (about 48 V); 48 on a bench arm fed 24 V |
 | 6 | 2 | torque (int16) | guess; small while holding, up to 87 on motor 0 |
 | 8 | 2 | velocity (int16) | non-zero only while position moves; one segment gave about 194 position counts per velocity count per second |
@@ -135,3 +135,151 @@ normal telemetry in mode 0, first try, no init needed. So a motor answers a bare
   frames are answered in mode 0 whatever byte 3 and the flag bit are (2,000 frames each, seven
   patterns tried on id 4). Idle polling does not clear it. Not known which event set it; hard
   regenerative braking raising the 24 V bench supply is one candidate. Needs a power cycle test.
+- Power cycle (24 V off about 10 s) cleared status `0x8` on all three motors. Positions read
+  87,953 / 175,252 / 79,648 afterwards (multi-turn values, inside the old end stops); whether the
+  count survives power-off unchanged is being re-checked with a new hand sweep. SDK `enable`,
+  zero torque, 2 s position hold (error at most 18 counts) and `disable` then worked.
+
+### Fault 0x8: cause and what does not clear it (2026-11-25, second occurrence)
+
+- Reproduced with a 20x full-range sine (lag abort) followed by the kd-80 damping brake. Logged per
+  frame: the status word turned `0x8` on the first or second brake frame, on all three motors within
+  2 ms. In those frames the torque reading jumped to 419 / 689 / 494 counts and the bus voltage
+  reading DROPPED from 24.0 to 19.0 / 15.0 / 22.0 V, then recovered within about 10 ms. So the fault
+  follows a supply sag under a large current demand (under-voltage or over-current; not over-voltage
+  from regeneration). Up to then the run itself (speed at the ceiling, lag 25,000) had not faulted.
+- Braking torque scale from the same log: torque reading is about 9e-4 x kd x velocity counts.
+- Did NOT clear it (status and enable checked after each, all three motors): run-mode damping
+  (0x9N, kd 25) for 1 s; idle + flag with kd 25 for 1 s; the boot probe (0x0N, byte 3 = 0,
+  torque -128) for 4 rounds and for 1 s; boot probe then 7 s of silence; 15 s of silence.
+  Script: `scripts/fault_clear_test.py`. Mode values 2-7 were not tried.
+- Position zero after power-on: id 4's end stops moved from -95,045..235,962 to 430,029..760,923,
+  a shift of 525,074 counts = 16.02 rotor turns (16 turns = 524,288). Ids 5 and 6 did not shift.
+  The earlier power cycle shifted nothing. Reading: position at power-on is only known modulo
+  16 rotor turns on id 4, i.e. probably one output revolution with a 16:1 gear (one data point).
+  End stops are now measured after every power-on and stored in `calibration/limits.json`.
+
+### Mode values probed on bench id 4 (2026-11-25), zero payload, one at a time
+
+| Mode | Result |
+|---|---|
+| 2 | ignored, reply stays mode 0, no motion (40 frames, watched 6 s) |
+| 3, 4, 5 | accepted from the first frame (reply reports the mode), back to 0 on the next idle frame; telemetry unchanged, no motion; function unknown |
+| 6 | ignored, reply stays mode 0 |
+| 7 | restart: answers for about 5 ms, silent until about 302 ms, then mode 0 with status 0. One frame, with or without the flag bit. Cleared `0x8` on ids 4, 5, 6 |
+
+- After a mode-7 restart, id 4's position reading dropped by 524,764 (16 turns = 524,288) and id 6's
+  rose by 819,199 (25 turns = 819,200); id 5 did not shift. Temperature B read equal to temperature A
+  right after the restart. Gear ratios inferred: id 4 16:1, id 6 25:1 (id 5 presumably 25:1, same travel).
+- `scripts/sweep.py` now shifts the stored end stops by whole output turns to match the reading and
+  aborts if they still do not fit. SDK: `MotorBus.restart()`, `g1motor restart`.
+- Scripts: `scripts/mode_probe.py`.
+
+### Modes 3, 4, 5 characterised on bench id 4 (2026-11-25)
+
+Eight short tests from rest at mid-travel (`scripts/mode_characterize.py`), then a coast-down from
+about 800 velocity counts with an all-zero command (`scripts/mode_coastdown.py`).
+
+| Mode | Torque +/-15 | Position step (kp 100) | Velocity +/-300 (kd 20) | Coast-down to <50 | Torque reading at rest |
+|---|---|---|---|---|---|
+| 0 | - | - | - | 10-11 ms | about -2 (noise) |
+| 1 | reaches 1,200+ vel counts in 20 ms | moves 1,180 / 3,400 | tracks, 211-308 | 25 / 64 ms | -0.8 |
+| 3 | no response | no response | no response | 9-11 ms | 0.0 |
+| 4 | no response | no response | no response | 25 / 64 ms | -0.8 to -0.9 |
+| 5 | no response | no response | no response | 10 ms | 0.0 |
+
+- So 0, 3, 5 brake the joint passively; 4 leaves it free like mode 1 with a zero command; none of
+  3-5 uses the command fields. In the braked modes the joint still crept slowly under load in a few
+  tests (about -150 velocity counts with a small opposing torque reading).
+- The mode-1 reference repeated after these tests matched the first run to within 1-2 %, so sending
+  payloads in modes 3-5 did not change the motor's behaviour.
+
+### Zeroing, gear ratios, units (2026-11-25)
+
+- No zeroing command found (modes 0-7 leave the reading unchanged apart from the restart shift; the
+  robot's controller sent no other frame type in our captures). SDK keeps the zero in software:
+  `Joint` (gear ratio, end stops, zero, `sync()` by whole output turns), checked on the bench
+  including a restart of id 6 that shifted the reading back by one turn.
+- Output-side figures: travel 227 / 187 / 187 deg (ids 4 / 5 / 6); speed ceiling at 24 V about
+  15.3 rad/s (id 4) and 9.8 rad/s (ids 5, 6).
+- Position scale of 32,768 counts per rotor turn is now supported by the exact 16- and 25-turn jumps.
+
+## Calibration on the robot (capture 153457_g1_calibration_6000000, 2026-11-25)
+
+Listen-only capture, 39 s, arm chain ids 0-4, robot put into its calibration mode by the user.
+206,932 pairs, all but one pass both checksums. Times from the start of the capture.
+
+| Time | Controller | Motors |
+|---|---|---|
+| 0 - 19.42 s | normal run mode, zero command (0x9N) | mode 1 |
+| 19.42 - 22.71 s | silent | |
+| 22.709 s | one idle poll to id 0 | reply byte 2 = `0x80 + id` (bit 7 set; seen only in these first replies) |
+| 22.710 - 22.976 s | 10 frames per motor, about 26 ms apart: byte 2 = `0x10 + id` (mode 1, no flag), byte 3 = 0, torque +16 (id 3: -16), kd 2, rest 0 | mode 0 then 1; joints press against an end stop, torque reading 14 (-17 on id 3) |
+| 23.047 - 23.114 s | ONE frame per motor: byte 2 = `0x60 + id` (mode 6), byte 3 = 0, bytes 4-5 = `00 fc`, bytes 6-9 = int32 angle, bytes 10-15 = `4d 1a 0d 42 07 6b` | reply reports mode 6, with `00 fc` echoed in the torque field |
+| 23.146 - 23.150 s | one mode-7 frame per motor (`0x70 + id`, all zero) | restart; bus silent 0.72 s |
+| 23.869 s | idle polls | ids 0, 1, 4 normal; ids 2, 3 send a new blob with bytes 14-15 = `00 80` |
+| 27.192 s | ids 2, 3: 12-byte payload (about 100 ms of frames) | normal telemetry from 27.290 s |
+| 29.830 s | flag bit set (0x8N); still mode 0 at the end of the capture (39.2 s) | mode 0 |
+
+The mode-6 angle is the joint angle at that end stop, int32 with 2^31 = one output turn:
+
+| id | value | angle | G1 joint limit it matches | position reading at that moment | reading / angle |
+|---|---|---|---|---|---|
+| 0 | 912,689,835 | +2.6704 rad (153.00 deg) | shoulder pitch upper | 222,816 | 524,268 per turn |
+| 1 | 769,510,605 | +2.2515 rad (129.00 deg) | shoulder roll upper | 187,856 | 524,252 |
+| 2 | 894,801,238 | +2.6180 rad (150.00 deg) | shoulder yaw upper | 218,448 | 524,266 |
+| 3 | -357,875,712 | -1.0471 rad (-59.99 deg) | elbow lower | -87,376 | 524,312 |
+| 4 | 674,082,725 | +1.9723 rad (113.00 deg) | wrist roll upper | 164,560 | 524,253 |
+
+- So mode 6 is the zeroing command: "you are now at this output angle". It needs the constant in
+  bytes 10-15 (a mode-6 frame with a zero payload was ignored on the bench) and is followed by a restart.
+- The position reading did not change across this calibration (the robot was already calibrated):
+  the reading is the joint angle, 524,288 counts per output turn (16 x 32,768) with 0 at the joint's
+  zero, on all five motors of this chain.
+- The joint-limit names are from memory of Unitree's published G1 limits, not checked today.
+- Challenge and response confirmed for ids 2 and 3: blob and 12-byte payload both differ from the
+  boot capture earlier today (id 2 blob `c8 54 2c dc fe dc ba 9a d4 80 af` -> payload byte 3 = `c1`,
+  `cf 15 f4 86 ef 3e ac 58 e0 07 6d 03`; id 3 blob `66 dd b7 3e 05 6a 2d ee a6 d7 85` -> `ca`,
+  `19 7a 32 74 a0 a2 c5 3a 97 4c 34 e0`). The algorithm is unknown, so those two motors cannot be
+  brought up without the robot's controller.
+- Not reproduced by us. Unknown: what `00 fc` means, whether the 6-byte constant is the same on
+  other robots or firmware, and whether the zero is stored permanently (the restart suggests so).
+
+## Full re-test of the guide (2026-11-25)
+
+`scripts/verify_captures.py` (28 checks against the robot captures) and `scripts/verify_bench.py`
+(34 live checks on the bench wrist, including sine runs through `sweep.py`).
+
+Corrections that came out of it:
+- Damping torque is 0.005 x KD x velocity reading, not 0.0009. Steady speed under constant torque on
+  id 4: (T, KD) = (20,10) (20,20) (20,40) (40,40) (40,80) (60,80) gave 0.00486-0.00512 with 4 counts
+  of friction. The earlier 0.0009 came from the hard-brake log, where the motors were at their torque
+  limit (400-700 counts; the damping term asked for about 4,000). The first torque-limited brake used
+  the wrong constant; it now uses 0.005 and a 200-count budget, and stopped all three joints from
+  about 1.2 M counts/s without a fault.
+- The reply torque is the net applied torque: with a 20-60 count feed-forward and damping it read
+  about +/-4 (friction) at steady speed.
+- Robot bus voltage: typically 47.0-48.5 V (median 48.5 at midday, 47.0 by the calibration capture),
+  extremes 44.5-50 V. The guide had said 48.0-48.5.
+- FLAG and the sequence byte are not needed: from idle, MODE 1 with FLAG clear and byte 3 = 0 gave run
+  mode on the second reply.
+- Watchdog: after 0.3 s and 0.5 s without polling a motor was still in run mode; after 1.0 s and 1.2 s
+  it was in mode 0 with status 0.
+- "KP 20 / KD 1 does not move ids 5, 6" is pose-dependent: in the re-test id 6 drifted 15,000 counts
+  under that gain. Reworded to "too weak to track".
+- Right after a restart one motor reported coil/shell 0/0 in its first reply.
+Not re-run: the deliberate hard-brake fault (`verify_bench.py --fault`); it was seen twice earlier today.
+
+### Stopping from top speed: three ways compared (2026-11-25)
+
+All from a 0.8 s full-range sine aborted at peak speed (about 1.03 / 1.27 / 1.27 M counts/s), 24 V bench supply.
+
+| Stop | Time to stop | Bus voltage reading | Status |
+|---|---|---|---|
+| Damping, KD 80 | about 25 ms | drops at once to 15-19 V | `0x8`, latched |
+| Damping limited to about 180 torque counts | 27-36 ms | rises to 30 V within 6 ms, then falls to 10-11 V at about 130 ms, back to 24 V by 560 ms | `0x8` from 130 ms; motors reset by themselves (about 28 lost replies each) and came back with 0 |
+| Straight to idle (mode 0) | 18 / 27 / 24 ms | 24.0-24.5 V throughout | 0, every poll answered |
+
+- So `0x8` tracks the voltage reading falling to about 15.5 V: an under-voltage flag. The damping brakes
+  cause it through the supply (regeneration pushes it up until it cuts out; the hardest brake pulls it down).
+- Idle is the stop to use. `sweep.py` aborts and SDK `disable()` now go straight to idle.

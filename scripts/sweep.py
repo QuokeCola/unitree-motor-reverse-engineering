@@ -12,6 +12,7 @@ Stops and returns every motor to idle (mode 0) on any abort condition or Ctrl-C.
 import argparse
 import json
 import math
+import os
 import sys
 import time
 
@@ -23,6 +24,9 @@ from zero_torque import exchange
 
 # End stops found by hand in zero-torque mode, capture 134738_bench_range_ids456.csv (raw counts).
 LIMITS = {4: (-95045, 235962), 5: (322, 426057), 6: (-190234, 236866)}
+# After a power cycle or restart the position reading can come back shifted by whole output turns.
+# Rotor turns per output turn: 16 seen on id 4, 25 on id 6; id 5 has not shifted yet (25 assumed, same travel as id 6).
+WRAP = {4: 16 * 32768, 5: 25 * 32768, 6: 25 * 32768}
 VEL_PER_POS = 128.0   # position counts per second for one velocity count (checked on robot data)
 
 
@@ -44,15 +48,31 @@ def main() -> int:
     ap.add_argument("--sine", type=float, metavar="SECONDS",
                     help="all joints follow a sine between their low and high targets for this long")
     ap.add_argument("--period", type=float, default=8.0, help="sine period in seconds")
+    ap.add_argument("--fade", type=float, help="seconds for the sine to fade in and out (default: one period)")
+    ap.add_argument("--peak-speed", type=float,
+                    help="shrink each joint's sine amplitude so its peak speed stays below this (counts/s)")
     ap.add_argument("--ff-coulomb", default="0", help="friction feed-forward: torque counts at any speed, per id")
     ap.add_argument("--ff-viscous", default="0", help="friction feed-forward: torque counts per 100,000 counts/s, per id")
     ap.add_argument("--ff-table", help="JSON from build_ff_table.py: torque needed along the travel, per direction")
     ap.add_argument("--ff-gain", type=float, default=1.0, help="fraction of the friction feed-forward to apply")
+    ap.add_argument("--limits", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "..",
+                                                     "calibration", "limits.json"),
+                    help="JSON of end stops from zero_torque.py --save-limits; they can change after a power cycle")
+    ap.add_argument("--abort-at", type=float, help="test aid: abort on purpose this many seconds into the sine")
+    ap.add_argument("--damping-brake", action="store_true",
+                    help="test aid: on abort brake with torque-limited damping (pumps a bench supply up to 30 V)")
+    ap.add_argument("--hard-brake", action="store_true",
+                    help="test aid: brake with a fixed kd of 80 as before (latches fault 0x8 from top speed)")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--log")
     ap.add_argument("--port", default=PORT)
     args = ap.parse_args()
     ids = [int(x) for x in args.ids.split(",")]
+    if os.path.exists(args.limits):
+        LIMITS.update({int(k): tuple(v) for k, v in json.load(open(args.limits)).items()})
+        print("end stops loaded from", os.path.relpath(args.limits))
+    else:
+        print("WARNING: no limits file; using end stops measured on 2026-11-25 before any power cycle")
 
     def per_id(text: str) -> dict:
         vals = [int(x) for x in text.split(",")]
@@ -98,10 +118,16 @@ def main() -> int:
         what = f"+/- {args.nudge} counts around the start" if args.nudge else f"{lo} .. {hi}"
         print(f"  id {i}: end stops {LIMITS[i][0]} .. {LIMITS[i][1]}, will move {what}"
               + ("" if args.nudge else f", about {2 * (hi - lo) / args.speed:.0f} s"))
+    def sine_amp(i: int) -> float:
+        amp = (targets[i][1] - targets[i][0]) / 2
+        if args.peak_speed:
+            amp = min(amp, args.peak_speed * args.period / (2 * math.pi))
+        return amp
+
     if args.sine:
         for i in ids:
-            amp = (targets[i][1] - targets[i][0]) / 2
-            print(f"  id {i}: sine amplitude {amp:.0f} counts, period {args.period} s, "
+            amp = sine_amp(i)
+            print(f"  id {i}: sine amplitude {amp:.0f} counts ({100 * amp / (LIMITS[i][1] - LIMITS[i][0]):.0f}% of travel each side), period {args.period} s, "
                   f"peak speed {2 * math.pi * amp / args.period:.0f} counts/s, for {args.sine:.0f} s")
     if args.dry_run:
         return 0
@@ -113,7 +139,7 @@ def main() -> int:
     ser.reset_input_buffer()
     log = open(args.log, "w") if args.log else None
     if log:
-        log.write("t,id,target,pos,vel,tau\n")
+        log.write("t,id,target,pos,vel,tau,volt_raw,status,phase\n")
 
     state = {i: dict(pos=None, target=None, vel=0, missed=0, peak_tau=0, peak_lag=0) for i in ids}
     n = 0
@@ -139,7 +165,7 @@ def main() -> int:
             s["missed"] = 0
             s["pos"] = r["pos"]
             if log and active:
-                log.write(f"{time.monotonic() - t_start:.5f},{i},{round(s['target'])},{r['pos']},{r['vel']},{r['tau']}\n")
+                log.write(f"{time.monotonic() - t_start:.5f},{i},{round(s['target'])},{r['pos']},{r['vel']},{r['tau']},{r['b5']},{r['word14']},run\n")
             if active:
                 lag = abs(s["target"] - r["pos"])
                 s["peak_lag"], s["peak_tau"] = max(s["peak_lag"], lag), max(s["peak_tau"], abs(r["tau"]))
@@ -189,7 +215,8 @@ def main() -> int:
     def sine_all(seconds: float) -> None:
         """Sine about the middle of each range. Amplitude fades in and out over one period."""
         mid = {i: (targets[i][0] + targets[i][1]) / 2 for i in ids}
-        amp = {i: (targets[i][1] - targets[i][0]) / 2 for i in ids}
+        amp = {i: sine_amp(i) for i in ids}
+        fade_s = args.fade or args.period
         ramp_all(mid)
         t_begin = time.monotonic()
         w = 2 * math.pi / args.period
@@ -197,15 +224,17 @@ def main() -> int:
             t = time.monotonic() - t_begin
             if t >= seconds:
                 break
+            if args.abort_at and t >= args.abort_at:
+                raise Abort(f"deliberate abort at {t:.2f} s (--abort-at)")
             # raised-cosine fade in/out; d_env is its exact time derivative
-            if t < args.period:
-                fade, sign = t / args.period, 1.0
-            elif seconds - t < args.period:
-                fade, sign = (seconds - t) / args.period, -1.0
+            if t < fade_s:
+                fade, sign = t / fade_s, 1.0
+            elif seconds - t < fade_s:
+                fade, sign = (seconds - t) / fade_s, -1.0
             else:
                 fade, sign = 1.0, 0.0
             envelope = 0.5 - 0.5 * math.cos(math.pi * fade)
-            d_env = sign * 0.5 * math.pi / args.period * math.sin(math.pi * fade)
+            d_env = sign * 0.5 * math.pi / fade_s * math.sin(math.pi * fade)
             for i in ids:
                 state[i]["target"] = mid[i] + envelope * amp[i] * math.sin(w * t)
                 # exact derivative of the target, so the feed-forward is free of timing jitter
@@ -223,6 +252,16 @@ def main() -> int:
             if state[i]["pos"] is None:
                 raise Abort(f"id {i}: no reply")
             state[i]["target"] = float(state[i]["pos"])   # hold where it is
+        for i in ids:   # move the stored end stops by whole output turns if the reading was re-referenced
+            lo, hi = LIMITS[i]
+            k = round((state[i]["pos"] - (lo + hi) / 2) / WRAP[i])
+            if k:
+                LIMITS[i] = (lo + k * WRAP[i], hi + k * WRAP[i])
+                targets[i] = (targets[i][0] + k * WRAP[i], targets[i][1] + k * WRAP[i])
+                print(f"id {i}: position reading is {k:+d} output turn(s) from the stored end stops; "
+                      f"using {LIMITS[i][0]} .. {LIMITS[i][1]}")
+            if not LIMITS[i][0] <= state[i]["pos"] <= LIMITS[i][1]:
+                raise Abort(f"id {i}: position {state[i]['pos']} does not fit the stored end stops; re-measure them")
         print("start positions: " + "  ".join(f"id{i} {state[i]['pos']}" for i in ids), flush=True)
         if args.sine:
             homes = {i: state[i]["target"] for i in ids}
@@ -267,12 +306,34 @@ def main() -> int:
         code = 130
     finally:
         try:
-            if code != 0:   # brake first: pure damping for about 0.5 s, so nothing coasts into an end stop
-                for _ in range(150):
+            if code != 0 and not (args.damping_brake or args.hard_brake):
+                for _ in range(300):
+                    for i in ids:
+                        r = exchange(ser, build_command(i))
+                        if log and r:
+                            log.write(f"{time.monotonic() - t_start:.5f},{i},0,{r['pos']},{r['vel']},{r['tau']},"
+                                      f"{r['b5']},{r['word14']},idle\n")
+                print("stopped by going straight to idle (passive brake)")
+            elif code != 0:   # brake first with damping, so nothing coasts into an end stop
+                # kd 80 at top speed drove the motors into their torque limit (400-700 counts), sagged a 24 V
+                # bench supply to 15 V and latched status 0x8 on every motor. Damping torque is
+                # 0.005 * kd * velocity counts (measured at kd 10-80), so kd is chosen from the measured
+                # speed to keep the braking torque near BRAKE_TORQUE.
+                BRAKE_TORQUE = 200
+                speed = {i: 10_000 for i in ids}   # velocity counts; assume fast until measured
+                for _ in range(300):
                     n += 1
                     for i in ids:
-                        exchange(ser, build_command(i, mode=1, flag=True, byte3=0x80 if (n // 8) % 2 == 0 else 0x90,
-                                                    kd=max(kd[i], 80)))
+                        brake_kd = int(min(80, max(1, BRAKE_TORQUE / (5e-3 * max(abs(speed[i]), 1)))))
+                        if args.hard_brake:
+                            brake_kd = 80
+                        r = exchange(ser, build_command(i, mode=1, flag=True, byte3=0x80 if (n // 8) % 2 == 0 else 0x90,
+                                                        kd=brake_kd))
+                        if r:
+                            speed[i] = r["vel"]
+                        if log and r:
+                            log.write(f"{time.monotonic() - t_start:.5f},{i},0,{r['pos']},{r['vel']},{r['tau']},"
+                                      f"{r['b5']},{r['word14']},brake\n")
                 print("braked with damping before idle")
             for _ in range(30):
                 cycle(0, False, False)

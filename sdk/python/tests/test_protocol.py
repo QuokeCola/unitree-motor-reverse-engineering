@@ -30,7 +30,8 @@ def test_command_round_trip():
 def test_decode_reply():
     s = MotorState.decode(REPLY_ID2)
     assert (s.id, s.mode, s.pos, s.vel, s.tau) == (2, 1, -180794, -8, -1)
-    assert (s.temp_a, s.temp_b, s.voltage) == (36, 35, 48.5)
+    assert (s.temp_coil, s.temp_shell, s.voltage) == (36, 35, 48.5)
+    assert (s.temp_a, s.temp_b) == (36, 35)          # old names still work
     b = MotorState.decode(REPLY_BENCH_ID4)
     assert (b.id, b.mode, b.pos, b.voltage) == (4, MODE_IDLE, 67611, 24.0)
     assert not b.fault and not s.fault
@@ -52,6 +53,12 @@ def test_bad_frames_rejected():
 def test_find_reply_skips_echo_and_noise():
     assert find_reply(CMD_IDLE_ID0 + b"\xfc\xee\x00" + REPLY_BENCH_ID4).id == 4
     assert find_reply(CMD_IDLE_ID0) is None
+
+
+def test_restart_frame():
+    from g1_joint_motor_sdk import MODE_RESTART
+    frame = MotorCmd(id=6, mode=MODE_RESTART).encode()
+    assert frame[2] == 0x76 and MotorCmd.decode(frame).mode == 7
 
 
 def test_field_range_checked():

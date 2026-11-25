@@ -30,6 +30,7 @@ def main() -> int:
     ap.add_argument("--ids", default="4,5,6")
     ap.add_argument("--seconds", type=float, default=5.0)
     ap.add_argument("--port", default=PORT)
+    ap.add_argument("--save-limits", help="write the lowest and highest position seen per id to this JSON file")
     ap.add_argument("--log", help="CSV file for every reply: t,id,mode,pos,vel,tau,temp_a,temp_b")
     args = ap.parse_args()
     ids = [int(x) for x in args.ids.split(",")]
@@ -91,6 +92,11 @@ def main() -> int:
                 print(f"      position {s['lo']} .. {s['hi']} counts, span {span} = {span / 32768:.3f} rotor turns "
                       f"(assuming 32768 counts per turn)")
         print(f"about {rate:.0f} polls per second per motor")
+        if args.save_limits:
+            import json
+            json.dump({str(i): [s["lo"], s["hi"]] for i, s in stats.items() if s["lo"] is not None},
+                      open(args.save_limits, "w"))
+            print("limits written to", args.save_limits)
         if log:
             log.close()
         ser.close()

@@ -1,127 +1,98 @@
-# g1-joint-motor-sdk
+# G1 joint motor SDK
 
-Unofficial Python driver for Unitree G1 joint motors, talking to them directly over their
-RS-485 bus. Reverse engineered from bus captures on 2026-11-25; not affiliated with or
-supported by Unitree. Version 0.1.0, Linux only.
+Unofficial drivers for Unitree G1 joint motors on their RS-485 bus, in three languages with the
+same API. Reverse engineered; not affiliated with or supported by Unitree. The protocol is
+described in `docs/G1_Joint_Motor_Protocol_Guide.pdf`.
 
-Use it on a **bare arm or motor with no robot controller on the bus**. On a complete robot
-the onboard controller is already the bus master, and a second master corrupts the traffic;
-`MotorBus` refuses to open if it hears traffic. On a robot, use it only to listen.
+| Folder | Language | What it is |
+|---|---|---|
+| `python/` | Python 3.10+ | `g1_joint_motor_sdk` package and the `g1motor` command; needs `pyserial` |
+| `cpp/` | C++17 | `g1motor` static library, CMake, no dependencies |
+| `matlab/` | MATLAB R2018a+ | `G1MotorBus` class over a MEX build of the C++ library |
 
-## Install
+Use them on a bare arm or motor with no robot controller on the bus. All three refuse to open a
+bus that already has traffic on it.
 
-    pip install -e .          # from this folder; needs pyserial
-    pip install -e ".[dev]"   # plus pytest
+## The same five calls everywhere
 
-Hardware: an FTDI FT232H RS-485 adapter (the Unitree one works) that supports 6 Mbaud. The
-user needs permission on the serial device (group `uucp` or `dialout`).
+| | Python | C++ | MATLAB |
+|---|---|---|---|
+| Open | `bus = MotorBus()` | `g1motor::MotorBus bus;` | `bus = G1MotorBus();` |
+| Find motors | `bus.scan()` | `bus.scan()` | `bus.scan()` |
+| Run mode, zero torque | `bus.enable([4, 5, 6])` | `bus.enable({4, 5, 6})` | `bus.enable([4 5 6])` |
+| Command | `bus.command(4, pos=p, kp=300, kd=40)` | `bus.command(4, p, 0, 0, 300, 40)` | `bus.command(4, 'pos', p, 'kp', 300, 'kd', 40)` |
+| Stop (idle brakes the joint) | `bus.disable()` | `bus.disable()` | `bus.disable()` |
+| Clear a fault | `bus.restart([4])` | `bus.restart({4})` | `bus.restart(4)` |
 
-## Quick start
+Values are raw counts. `Joint` (Python, C++) and `setJoint` / `jointAngle` (MATLAB) add gear ratio,
+end stops and output-shaft angles. Details: `python/README.md`.
 
-```python
-from g1_joint_motor_sdk import MotorBus
+## Build and run
 
-with MotorBus() as bus:                       # the only FTDI adapter, 6 Mbaud
-    print(bus.scan())                         # {4: MotorState(...), 5: ..., 6: ...}
-    start = bus.enable([4, 5, 6])             # run mode, zero torque: joints are free
-    for _ in range(1000):                     # hold joint 4 where it is
-        state = bus.command(4, pos=start[4].pos, kp=300, kd=40)
-# leaving the block brakes the motors with damping, then puts them in idle
-```
+Python:
 
-Command line:
-
+    pip install -e python
     g1motor scan
-    g1motor read --ids 4,5,6 --seconds 10 [--zero-torque]
-    g1motor sniff --seconds 30 --out capture.bin      # listen only, safe on a full robot
 
-Examples: `examples/scan.py`, `zero_torque.py`, `position_hold.py`, `sine.py`.
+C++:
 
-## API
+    cmake -S cpp -B cpp/build && cmake --build cpp/build
+    ctest --test-dir cpp/build          # frame tests, no hardware
+    cpp/build/g1motor_scan              # optional argument: the port name
 
-| Call | What it does |
-|---|---|
-| `MotorBus(port=None)` | Opens the adapter at 6 Mbaud. Raises `BusBusyError` if the bus is not silent. |
-| `MotorState.error`, `.fault` | Status word from the motor; non-zero blocks run mode. |
-| `bus.scan()` | Polls ids 0-14 with the idle frame; returns `{id: MotorState}`. |
-| `bus.enable(ids)` | Idle -> run mode with zero torque, in the order the G1 controller uses. |
-| `bus.command(id, pos, vel, tau, kp, kd)` | One hybrid command in raw counts; returns the fresh `MotorState`. |
-| `bus.read(id)` | State only. On an enabled motor this sends zero torque, which drops a hold. |
-| `bus.set_limits(id, low, high)` | Clamps position targets for that motor. |
-| `bus.disable(ids=None)` | Damping brake for 0.5 s, then idle. Also done on leaving the `with` block. |
-| `bus.listen(seconds)` | Raw bytes, no transmission. |
-| `MotorCmd`, `MotorState` | Frame encode / decode, also usable on captured data. |
-| `units` | Counts to rad, rad/s, N*m. **Assumed scales**, rotor side. |
+MATLAB (needs a C++17 compiler set up with `mex -setup C++`):
 
-The motor applies `tau + kp * (pos - measured) + kd * (vel - measured)` and keeps applying the
-last command it received. Call `command()` for every enabled motor in a steady loop. What a
-motor does when polling simply stops (no brake, no idle) has not been tested.
+    cd matlab
+    build_mex
+    bus = G1MotorBus();  struct2table(bus.scan())
 
-## Wire format
+## Serial port: what is used and why
 
-6,000,000 baud, 8N1, half duplex. The motor answers each command addressed to it.
+The bus runs at 6,000,000 baud, which is not a standard rate. No general serial library was
+adopted for C++; `cpp/src/serial_port.cpp` calls each operating system's own interface, about
+200 lines in total:
 
-Command, 20 bytes, little-endian:
-
-| Offset | Size | Field |
+| System | Method | Status |
 |---|---|---|
-| 0 | 2 | header `FE EE` |
-| 2 | 1 | bits 0-3 id, bits 4-6 mode (0 idle, 1 run), bit 7 flag |
-| 3 | 1 | toggles `80`/`90` in the controller's traffic |
-| 4 | 2 | torque feed-forward, int16 |
-| 6 | 2 | velocity target, int16 |
-| 8 | 4 | position target, int32 |
-| 12 | 2 | kp, int16 |
-| 14 | 2 | kd, int16 |
-| 16 | 4 | CRC-32 over bytes 0-15 |
+| Linux | `termios2` with `BOTHER` (`TCSETS2`), FTDI low-latency flag | run on hardware in all three languages |
+| Windows | Win32 `CreateFile` / `DCB.BaudRate` | written, not run |
+| macOS | `termios` + `IOSSIOSPEED` | written, not run |
 
-Reply, 26 bytes:
+Reasons, from a search on 2026-11-25:
 
-| Offset | Size | Field |
-|---|---|---|
-| 0 | 2 | header `FC EE` |
-| 2 | 1 | bits 0-3 id, bits 4-6 mode |
-| 3 | 1 | temperature A (deg C, likely) |
-| 4 | 1 | temperature B |
-| 5 | 1 | bus voltage, 0.5 V per count |
-| 6 | 2 | torque, int16 |
-| 8 | 2 | velocity, int16 |
-| 10 | 4 | position, int32 |
-| 14 | 4 | status / fault word, 0 in normal running |
-| 18 | 2 | unknown, about 2,600-3,050 |
-| 20 | 2 | unknown |
-| 22 | 4 | CRC-32 over bytes 2-21 (header excluded) |
+- **Linux custom rates are fragile in libraries.** glibc 2.42 changed its termios handling, which broke
+  pyserial's custom-rate path (EINVAL; pyserial issue 805, seen on this machine) and required a fix in
+  libserialport. A forum report also describes libserialport accepting a non-standard rate without
+  applying it. The `TCSETS2` ioctl itself is stable.
+- **Windows** takes any rate through the DCB, so no library is needed there.
+- **macOS** takes custom rates through `IOSSIOSPEED`, but Apple's built-in FTDI driver is reported
+  to stop at about 3 Mbaud. If 6 Mbaud is refused there, the options are FTDI's own VCP driver, or
+  talking to the chip directly with FTDI's D2XX library, libftdi, or pyftdi (pure Python). None of
+  those is implemented here; they would be a second backend behind `SerialPort`.
+- **Python** keeps `pyserial` for opening the port and reading, with the Linux rate set by the same
+  `TCSETS2` call; on Windows and macOS pyserial sets the rate itself.
+- **MATLAB** goes through the C++ code (MEX) instead of MATLAB's `serialport`, whose documentation
+  does not say whether non-standard rates are supported on each system.
 
-CRC: polynomial `0x04C11DB7`, init `0xFFFFFFFF`, no reflection, no final XOR, over 32-bit
-little-endian words (the `crc32_core` of Unitree's public A1/B1 SDK).
+Sources: [pyserial issue 805](https://github.com/pyserial/pyserial/issues/805),
+[Arch forum thread on libserialport](https://bbs.archlinux.org/viewtopic.php?id=308199%2F),
+[Apple forum: serial speed limited to 3 Mbps](https://developer.apple.com/forums/thread/771291),
+[pySerial API notes on custom rates](https://pyserial.readthedocs.io/en/stable/pyserial_api.html),
+[FTDI AN232B-05 baud rates](https://www.ftdichip.com/old2020/Support/Documents/AppNotes/AN232B-05_BaudRates.pdf),
+[FTDI AN_107 driver options (latency timer)](https://www.ftdichip.com/old2020/support/Documents/AppNotes/AN_107_AdvancedDriverOptions_AN_000073.pdf),
+[MathWorks serialport](https://www.mathworks.com/help/matlab/ref/serialport.html).
 
-## What is verified and what is not
+## Platform notes
 
-Verified on hardware:
-- Frame layout and both checksums: about 3.8 million captured command/reply pairs from a G1 arm.
-- Scan, zero torque, position control with kp/kd, velocity and torque feed-forward: on a bench
-  wrist (ids 4, 5, 6) at 24 V. Full-range sines up to a 0.8 s period.
-- Those motors top out at about 1,275,000 position counts/s on 24 V.
-
-Not verified, or known gaps:
-- **Physical units.** `units` uses GO-M8010-6 scales; only the position/velocity ratio is checked.
-  Gear ratios are unknown, so everything is rotor side.
-- **Gain scale.** kp and kd are raw; tuned values for the bench wrist were kp 300, kd 40-80.
-- **Other joints.** Only wrist motors were driven. On the robot, two arm motors (ids 2 and 3 of
-  the chain observed) need a 12-byte payload at boot before they report telemetry. This SDK does
-  not send it, and it is unknown whether that payload is fixed or a challenge and response.
-- **Byte 3 and the flag bit.** Reproduced as the controller sends them; whether they are required
-  is untested.
-- **Faults.** `MotorState.error` is the status word. Value `0x8` latched on all three bench motors
-  after a hard stop from top speed on a 24 V bench supply (cause not confirmed), and they then refused
-  run mode (whether a power cycle clears it is not yet tested); `enable()` raises `MotorFaultError` in that case. The meaning of
-  individual bits and any way to clear a fault over the bus are unknown.
-- **Rate.** About 340 exchanges per second per motor with three motors from Python; the robot's
-  controller does about 1,300.
-
-Commanding a motor moves real hardware. Keep clear of the joints, start with low gains, and set
-limits with `set_limits`.
-
-## Tests
-
-    pytest tests        # frame encode/decode against captured frames; no hardware needed
+- **Adapter.** An FTDI FT232H RS-485 adapter (the Unitree one works). Other USB serial chips may not
+  reach 6 Mbaud.
+- **Latency timer.** FTDI adapters hold short replies for a latency time, 16 ms by default. On Linux
+  the SDK sets it to 1 ms. On Windows set it by hand: Device Manager, the COM port, Port Settings,
+  Advanced, Latency Timer = 1 ms. At 16 ms the polling rate would be about 60 exchanges per second.
+- **Polling rate.** With the 1 ms latency timer, one exchange takes about 1 ms in every language:
+  about 330 per second per motor with three motors (Python 332, C++ 334, MATLAB 328 measured). The
+  robot's controller does about 1,313 per motor. Going faster needs the latency timer below 1 ms,
+  which means talking to the FTDI chip directly.
+- **Permissions (Linux).** The user must be in the group that owns the serial device (`uucp` or `dialout`).
+- **Port names.** Linux finds the only FTDI adapter by itself. On Windows and macOS give the name
+  (`COM5`, `/dev/cu.usbserial-XXXX`) in C++ and MATLAB; Python looks for an FTDI device on all three.
