@@ -1,0 +1,415 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>G1 Joint Motor RS-485 Communication Protocol - Unofficial Guide</title>
+<style>
+  @page { size: 138mm 205mm; margin: 14mm 12mm 16mm 12mm;
+          @bottom-right { content: counter(page); font: 700 8pt "Liberation Sans", Arial, sans-serif; color: #222; }
+          @bottom-left { content: "Unofficial guide. Not a Unitree document."; font: 6.5pt "Liberation Sans", Arial, sans-serif; color: #999; } }
+  @page :first { margin: 0; @bottom-right { content: none; } @bottom-left { content: none; } }
+  * { box-sizing: border-box; }
+  html { font: 8.2pt/1.42 "Liberation Sans", Arial, Helvetica, sans-serif; color: #1a1a1a; }
+  body { margin: 0; }
+  h1 { font-size: 14pt; margin: 14pt 0 5pt; line-height: 1.2; break-after: avoid; }
+  h1:first-child { margin-top: 0; }
+  h2 { font-size: 10.5pt; font-weight: 400; background: #e2e2e2; padding: 3pt 5pt; margin: 11pt 0 6pt; break-after: avoid; }
+  h3 { font-size: 8.4pt; margin: 8pt 0 2pt; break-after: avoid; }
+  p { margin: 0 0 5pt; text-align: justify; }
+  ul, ol { margin: 0 0 5pt; padding-left: 14pt; }
+  li { margin-bottom: 1.5pt; }
+  code, .mono { font-family: "Liberation Mono", "DejaVu Sans Mono", monospace; font-size: 7.4pt; }
+  pre { font: 6.9pt/1.35 "Liberation Mono", "DejaVu Sans Mono", monospace; background: #f3f3f3; padding: 5pt 6pt; margin: 4pt 0 7pt;
+        white-space: pre-wrap; break-inside: avoid; }
+  table { border-collapse: collapse; width: 100%; margin: 4pt 0 8pt; font-size: 7.5pt; break-inside: avoid; }
+  th { background: #d9d9d9; font-weight: 400; padding: 2.2pt 4pt; border-top: 0.8pt solid #222; border-bottom: 0.5pt solid #222; text-align: center; }
+  td { padding: 2.2pt 4pt; border-bottom: 0.4pt solid #999; vertical-align: top; }
+  tr:last-child td { border-bottom: 0.8pt solid #222; }
+  td.c, th.c { text-align: center; white-space: nowrap; }
+  td.l, th.l { text-align: left; }
+  .meta { display: grid; grid-template-columns: auto auto; gap: 1pt 22pt; width: max-content; margin: 2pt auto 5pt; font-size: 7.8pt; }
+  .note { display: grid; grid-template-columns: 16pt 1fr; gap: 6pt; border-top: 0.6pt solid #222; border-bottom: 0.6pt solid #222;
+          padding: 5pt 2pt; margin: 6pt 0 8pt; break-inside: avoid; }
+  .note svg { width: 14pt; height: 14pt; margin-top: 1pt; }
+  .note p { margin: 0; }
+  .tag { display: inline-block; font-size: 6.4pt; border: 0.5pt solid #555; border-radius: 2pt; padding: 0 3pt; margin-left: 2pt; color: #444; white-space: nowrap; }
+  figure { margin: 6pt 0 8pt; break-inside: avoid; }
+  figcaption { font-size: 7pt; color: #555; text-align: center; margin-top: 3pt; }
+  .pb { break-before: page; }
+  .keep { break-inside: avoid; }
+  p { orphans: 3; widows: 3; }
+  td.hex { font: 6.5pt "Liberation Mono", "DejaVu Sans Mono", monospace; white-space: nowrap; }
+  h2 + p, h1 + p { break-before: avoid; }
+  /* cover */
+  .cover { height: 205mm; padding: 16mm 14mm 12mm; display: flex; flex-direction: column; break-after: page; }
+  .cover .brand { font-size: 25pt; color: #555; letter-spacing: 0.3pt; }
+  .cover .title { font-size: 16.5pt; font-weight: 700; color: #555; margin-top: 3pt; line-height: 1.2; }
+  .cover .kind { font-size: 12pt; color: #666; margin-top: 16pt; }
+  .cover .ver { margin-top: 7pt; font-size: 7.5pt; color: #555; }
+  .cover .ver span { border: 0.7pt solid #555; border-radius: 2.5pt; padding: 0.5pt 3.5pt; margin-right: 5pt; font-size: 8pt; }
+  .cover .art { flex: 1; display: flex; align-items: center; justify-content: center; }
+  .cover table.key { margin: 12mm 0 0; font-size: 7.6pt; }
+  .cover table.key td:first-child { width: 37%; color: #333; }
+  .cover .foot { font-size: 7pt; color: #666; line-height: 1.5; }
+  .cover .foot b { color: #333; }
+</style>
+</head>
+<body>
+
+<section class="cover">
+  <div class="brand">G1 Joint Motor</div>
+  <div class="title">RS-485 Communication Protocol</div>
+  <div class="kind">Unofficial User Guide</div>
+  <div class="ver"><span>V0.1</span>2026.11</div>
+  <table class="key">
+    <tr><th class="l" colspan="2">RS-485 key parameters</th></tr>
+    <tr><td>Bit rate</td><td>6,000,000 baud</td></tr>
+    <tr><td>Character format</td><td>8 data bits, no parity, 1 stop bit (8N1)</td></tr>
+    <tr><td>Flow control</td><td>None</td></tr>
+    <tr><td>Duplex</td><td>Half duplex, two-wire</td></tr>
+    <tr><td>Bus access</td><td>Single master; a motor transmits only in reply to its own ID</td></tr>
+    <tr><td>Motor IDs</td><td>0-14</td></tr>
+    <tr><td>Byte order</td><td>Little-endian</td></tr>
+    <tr><td>Command frame</td><td>20 bytes, header 0xFE 0xEE</td></tr>
+    <tr><td>Reply frame</td><td>26 bytes, header 0xFC 0xEE</td></tr>
+    <tr><td>Checksum</td><td>CRC-32, polynomial 0x04C11DB7, initial value 0xFFFFFFFF</td></tr>
+    <tr><td>Polling rate (G1 controller)</td><td>About 1,313 Hz per motor, 5 motors on the chain</td></tr>
+    <tr><td>One command + reply</td><td>46 bytes, about 77 &#181;s on the wire</td></tr>
+  </table>
+  <div class="art">
+    <svg viewBox="0 0 330 232" width="100mm" font-family="Liberation Sans, Arial, sans-serif">
+      <g font-size="8" fill="#555">
+        <text x="0" y="14">Command (controller &#8594; motor), 20 bytes</text>
+        <text x="0" y="104">Reply (motor &#8594; controller), 26 bytes</text>
+      </g>
+      <g stroke="#444" stroke-width="0.9" fill="none">
+        <rect x="0" y="22" width="320" height="34"/>
+        <path d="M32 22v34M48 22v34M64 22v34M96 22v34M128 22v34M192 22v34M224 22v34M256 22v34"/>
+        <rect x="0" y="112" width="320" height="34" />
+        <path d="M24.6 112v34M36.9 112v34M49.2 112v34M61.5 112v34M73.8 112v34M98.5 112v34M123.1 112v34M172.3 112v34M221.5 112v34M246.2 112v34M270.8 112v34"/>
+      </g>
+      <rect x="256" y="22" width="64" height="34" fill="#dcdcdc" stroke="#444" stroke-width="0.9"/>
+      <rect x="270.8" y="112" width="49.2" height="34" fill="#dcdcdc" stroke="#444" stroke-width="0.9"/>
+      <g font-size="7" fill="#333" text-anchor="middle">
+        <text x="16" y="42">FE EE</text><text x="40" y="42">ID</text><text x="56" y="42">SEQ</text><text x="80" y="42">T</text>
+        <text x="112" y="42">W</text><text x="160" y="42">POS</text><text x="208" y="42">KP</text><text x="240" y="42">KD</text><text x="288" y="42">CRC32</text>
+        <text x="12.3" y="132">FC EE</text><text x="30.7" y="132">ID</text><text x="43" y="132" font-size="6">T1</text><text x="55.3" y="132" font-size="6">T2</text>
+        <text x="67.6" y="132">V</text><text x="86.1" y="132">T</text><text x="110.8" y="132">W</text><text x="147.7" y="132">POS</text>
+        <text x="196.9" y="132">STATUS</text><text x="233.8" y="132" font-size="6">AUX</text><text x="258.5" y="132" font-size="6">AUX</text><text x="295.4" y="132">CRC32</text>
+      </g>
+      <g font-size="6" fill="#888" text-anchor="middle">
+        <text x="0" y="66" text-anchor="start">0</text><text x="32" y="66">2</text><text x="48" y="66">3</text><text x="64" y="66">4</text><text x="96" y="66">6</text>
+        <text x="128" y="66">8</text><text x="192" y="66">12</text><text x="224" y="66">14</text><text x="256" y="66">16</text><text x="320" y="66" text-anchor="end">20</text>
+        <text x="0" y="156" text-anchor="start">0</text><text x="24.6" y="156">2</text><text x="73.8" y="156">6</text><text x="98.5" y="156">8</text><text x="123.1" y="156">10</text>
+        <text x="172.3" y="156">14</text><text x="221.5" y="156">18</text><text x="270.8" y="156">22</text><text x="320" y="156" text-anchor="end">26</text>
+      </g>
+      <g font-size="7" fill="#777"><text x="0" y="180">Byte offsets shown below each frame. Field details from page 4.</text></g>
+    </svg>
+  </div>
+  <div class="foot">
+    <b>Reverse-engineered documentation.</b> Written from bus captures and bench tests on 2026-11-25.<br>
+    Not produced, reviewed or endorsed by Unitree Robotics. Unitree and G1 are names of their respective owner.
+  </div>
+</section>
+
+<h1>Notice</h1>
+<p>This guide describes the serial protocol spoken by the joint motors of a Unitree G1 humanoid arm, as observed on the wire.
+It was written without access to any manufacturer documentation for these motors. Every statement is marked by how it was
+established: <span class="tag">verified</span> means it was checked against captured traffic or reproduced on a motor,
+<span class="tag">inferred</span> means it fits the data but was not tested directly, and <span class="tag">assumed</span> means it is
+carried over from Unitree's public GO-M8010-6 motor protocol and not checked on these motors.</p>
+<p>The manufacturer may change the protocol in other hardware or firmware versions. Use at your own risk.</p>
+
+<h1>Warning</h1>
+<ol>
+  <li>A motor in run mode applies torque as soon as it receives a command with non-zero gains or torque. Keep clear of the joint.</li>
+  <li>Never connect a second controller to the bus of a complete robot. The onboard controller polls continuously, and two masters on one RS-485 bus corrupt each other's frames. Listening only is safe.</li>
+  <li>Start with low gains and position targets equal to the measured position. Gains are raw integers with no confirmed physical scale.</li>
+  <li>Stay inside the mechanical end stops. The motor does not know the joint limits; position is a free-running multi-turn count.</li>
+  <li>Do not brake hard from high speed on a bench power supply. Three motors latched a fault after such a stop (see "Status Word").</li>
+  <li>What a motor does if polling stops while it is in run mode has not been tested. Return motors to idle mode before closing the port.</li>
+</ol>
+
+<h1>Introduction</h1>
+<p>Each arm of the G1 carries its joint motors on one RS-485 chain. The controller is the only master. It addresses one motor at
+a time with a 20-byte command and that motor answers with a 26-byte reply holding its position, velocity, torque, temperatures,
+bus voltage and a status word. A command carries a complete hybrid setpoint (torque, velocity, position and two gains), so there
+are no separate enable, mode or parameter messages: everything is expressed in the one command frame.</p>
+
+<h2>Scope of this guide</h2>
+<table>
+  <tr><th class="l">Hardware</th><th class="l">What was done</th></tr>
+  <tr><td>G1 arm chain, motor IDs 0-4, on the robot</td><td>Listened only. Boot, zero-torque, damping and locked-standing modes captured; about 3.8 million command/reply pairs decoded.</td></tr>
+  <tr><td>Separate wrist assembly, motor IDs 4, 5, 6, no controller, 24 V supply</td><td>Driven with frames built from this guide: scan, zero torque, position control, feed-forward, speed tests.</td></tr>
+</table>
+
+<h1>Bus Overview</h1>
+<table>
+  <tr><th class="l" style="width:36%">Item</th><th class="l">Value</th></tr>
+  <tr><td>Physical layer</td><td>RS-485, half duplex, two-wire <span class="tag">verified</span></td></tr>
+  <tr><td>Bit rate</td><td>6,000,000 baud, 8 data bits, no parity, 1 stop bit <span class="tag">verified</span></td></tr>
+  <tr><td>Byte order</td><td>Little-endian for all multi-byte fields <span class="tag">verified</span></td></tr>
+  <tr><td>Topology</td><td>One master (controller), up to 15 motors, IDs 0-14 <span class="tag">inferred</span></td></tr>
+  <tr><td>Access</td><td>Motors transmit only in answer to a command with their ID <span class="tag">verified</span></td></tr>
+  <tr><td>Command / reply length</td><td>20 bytes / 26 bytes <span class="tag">verified</span></td></tr>
+  <tr><td>Controller polling rate</td><td>About 1,313 commands per second per motor with 5 motors on the chain (one full round every 0.76 ms) <span class="tag">verified</span></td></tr>
+  <tr><td>Lowest rate tried</td><td>About 340 per second per motor; accepted <span class="tag">verified</span></td></tr>
+  <tr><td>Time on the wire</td><td>One command plus reply is 46 bytes, about 77 &#181;s at 6 Mbaud</td></tr>
+</table>
+<div class="note">
+  <svg viewBox="0 0 24 24"><path d="M12 3 2 21h20z" fill="none" stroke="#222" stroke-width="1.6"/><path d="M12 10v5M12 17.5v1" stroke="#222" stroke-width="1.8"/></svg>
+  <p>Many USB serial adapters cannot reach 6 Mbaud. An FTDI FT232H-based RS-485 adapter was used for all work in this guide.
+  On Linux the rate must be set with the <code>TCSETS2</code>/<code>BOTHER</code> ioctl; set the FTDI latency timer to 1 ms.</p>
+</div>
+<p>Connector pinouts and cable colours are not covered here; they were not examined.</p>
+
+<h1 class="pb">RS-485 Communication Protocol</h1>
+
+<h2>Motor Receiving Message Format</h2>
+<p>The controller sends this frame to command one motor. The motor applies it until the next command arrives.</p>
+<div class="meta"><span>Header: 0xFE 0xEE</span><span>Direction: controller &#8594; motor</span><span>Length: 20 bytes</span><span>Checksum: CRC-32 over DATA[0]-DATA[15]</span></div>
+<table>
+  <tr><th style="width:21%">Data Field</th><th>Description</th><th style="width:15%">Type</th></tr>
+  <tr><td class="c">DATA[0]</td><td>Header, 0xFE</td><td class="c" rowspan="2">-</td></tr>
+  <tr><td class="c">DATA[1]</td><td>Header, 0xEE</td></tr>
+  <tr><td class="c">DATA[2]</td><td>Motor ID and mode (see "ID and Mode Byte")</td><td class="c">uint8</td></tr>
+  <tr><td class="c">DATA[3]</td><td>Sequence byte (see "Sequence Byte")</td><td class="c">uint8</td></tr>
+  <tr><td class="c">DATA[4]-DATA[5]</td><td>Feed-forward torque T</td><td class="c">int16</td></tr>
+  <tr><td class="c">DATA[6]-DATA[7]</td><td>Target velocity W</td><td class="c">int16</td></tr>
+  <tr><td class="c">DATA[8]-DATA[11]</td><td>Target position POS</td><td class="c">int32</td></tr>
+  <tr><td class="c">DATA[12]-DATA[13]</td><td>Position gain KP</td><td class="c">int16</td></tr>
+  <tr><td class="c">DATA[14]-DATA[15]</td><td>Velocity (damping) gain KD</td><td class="c">int16</td></tr>
+  <tr><td class="c">DATA[16]-DATA[19]</td><td>CRC-32 of DATA[0]-DATA[15]</td><td class="c">uint32</td></tr>
+</table>
+<p>Field positions for POS, KP and KD were confirmed from the robot's mode changes and by driving the bench motors; T was
+confirmed as a torque feed-forward on the bench; W was used as a velocity feed-forward with the expected effect.
+<span class="tag">verified</span></p>
+
+<h3>Control law</h3>
+<pre>torque = T + KP &#215; (POS &#8722; measured position) + KD &#215; (W &#8722; measured velocity)</pre>
+<p>This is the standard Unitree hybrid command. <span class="tag">inferred</span> The individual terms behave as written; the
+relative scaling of KP and KD in physical units is not known. All fields zero gives zero torque: the joint turns freely.</p>
+
+<h2>ID and Mode Byte</h2>
+<table>
+  <tr><th style="width:14%">Bit</th><th style="width:20%">Name</th><th>Description</th></tr>
+  <tr><td class="c">7</td><td class="c">FLAG</td><td>Command only. The robot's controller sets it 2.6 s after it starts polling and keeps it set. Meaning unknown. Bench motors were enabled with it set. Always 0 in replies.</td></tr>
+  <tr><td class="c">6-4</td><td class="c">MODE</td><td>0 = idle: the motor answers but applies no torque. 1 = run: the control law is active. Other values not seen. In a reply this is the mode the motor is actually in.</td></tr>
+  <tr><td class="c">3-0</td><td class="c">ID</td><td>Motor address, 0-14. 15 is the broadcast address in Unitree's public GO-M8010-6 protocol; it was never sent here.</td></tr>
+</table>
+<table>
+  <tr><th>DATA[2] in command</th><th>Reply DATA[2]</th><th class="l">Seen when</th></tr>
+  <tr><td class="c">0x00 + ID</td><td class="c">0x00 + ID</td><td>Start of polling after power-on; bus scan</td></tr>
+  <tr><td class="c">0x80 + ID</td><td class="c">0x00 + ID</td><td>Robot boot, 2.6 s to 26 s after polling starts</td></tr>
+  <tr><td class="c">0x90 + ID</td><td class="c">0x10 + ID</td><td>Normal operation (run mode)</td></tr>
+</table>
+
+<h2>Sequence Byte</h2>
+<p>DATA[3] is 0x00 in the first frames after power-on. Once continuous polling starts it changes about every 8 frames
+(about 6 ms). On three of the five robot motors it alternates between 0x80 and 0x90. On the other two the low bits count up
+by one at each change while bit 7 toggles. Its purpose is unknown. The bench motors entered run mode and ran normally with
+the 0x80/0x90 alternation; whether a motor requires any particular pattern was not established.</p>
+
+<div class="keep"><h2>Motor Sending Message Format</h2>
+<p>The addressed motor answers every command, including in idle mode.</p>
+<div class="meta"><span>Header: 0xFC 0xEE</span><span>Direction: motor &#8594; controller</span><span>Length: 26 bytes</span><span>Checksum: CRC-32 over DATA[2]-DATA[21]</span></div>
+<table>
+  <tr><th style="width:21%">Data Field</th><th>Description</th><th style="width:15%">Type</th></tr>
+  <tr><td class="c">DATA[0]</td><td>Header, 0xFC</td><td class="c" rowspan="2">-</td></tr>
+  <tr><td class="c">DATA[1]</td><td>Header, 0xEE</td></tr>
+  <tr><td class="c">DATA[2]</td><td>Motor ID (bits 3-0) and current mode (bits 6-4)</td><td class="c">uint8</td></tr>
+  <tr><td class="c">DATA[3]</td><td>Temperature 1, &#176;C <span class="tag">inferred</span></td><td class="c">uint8</td></tr>
+  <tr><td class="c">DATA[4]</td><td>Temperature 2, &#176;C; reads 0-5 below temperature 1 <span class="tag">inferred</span></td><td class="c">uint8</td></tr>
+  <tr><td class="c">DATA[5]</td><td>Bus voltage, 0.5 V per count <span class="tag">verified</span></td><td class="c">uint8</td></tr>
+  <tr><td class="c">DATA[6]-DATA[7]</td><td>Torque</td><td class="c">int16</td></tr>
+  <tr><td class="c">DATA[8]-DATA[9]</td><td>Velocity</td><td class="c">int16</td></tr>
+  <tr><td class="c">DATA[10]-DATA[13]</td><td>Position, multi-turn</td><td class="c">int32</td></tr>
+  <tr><td class="c">DATA[14]-DATA[17]</td><td>Status word; 0 in normal operation (see "Status Word")</td><td class="c">uint32</td></tr>
+  <tr><td class="c">DATA[18]-DATA[19]</td><td>Unknown; 2,600-3,050, noisy</td><td class="c">uint16</td></tr>
+  <tr><td class="c">DATA[20]</td><td>Unknown; 0</td><td class="c">uint8</td></tr>
+  <tr><td class="c">DATA[21]</td><td>Unknown; 0 on most motors, changes every frame on two robot motors</td><td class="c">uint8</td></tr>
+  <tr><td class="c">DATA[22]-DATA[25]</td><td>CRC-32 of DATA[2]-DATA[21]</td><td class="c">uint32</td></tr>
+</table></div>
+<p>Sending frequency: one reply per command, so it follows the controller (about 1.3 kHz on the robot).<br>
+Position: same unit as the command position; it matched the target to within 1-2 counts when holding. <span class="tag">verified</span><br>
+Bus voltage: read 24.0-24.5 V on a 24 V bench supply and 48.0-48.5 V on the robot. <span class="tag">verified</span></p>
+<div class="note">
+  <svg viewBox="0 0 24 24"><path d="M12 3 2 21h20z" fill="none" stroke="#222" stroke-width="1.6"/><path d="M12 10v5M12 17.5v1" stroke="#222" stroke-width="1.8"/></svg>
+  <p>The reply header is 0xFC 0xEE, and the reply checksum does not cover the header. Both differ from the command, and from
+  Unitree's public GO-M8010-6 protocol (reply header 0xFD 0xEE, 16-bit checksum).</p>
+</div>
+
+<h2>Checksum</h2>
+<p>CRC-32 with polynomial 0x04C11DB7, initial value 0xFFFFFFFF, no bit reflection and no final XOR. The data is taken as 32-bit
+little-endian words, each fed most-significant bit first. The result is stored little-endian. This is the <code>crc32_core</code>
+routine of Unitree's public A1/B1 motor SDK. <span class="tag">verified</span> on 3.8 million frames.</p>
+<pre>uint32_t crc32_core(const uint32_t *words, uint32_t count) {
+    uint32_t crc = 0xFFFFFFFF;
+    for (uint32_t i = 0; i &lt; count; i++) {
+        uint32_t data = words[i];
+        for (uint32_t bit = 0x80000000; bit; bit &gt;&gt;= 1) {
+            if (crc &amp; 0x80000000) crc = (crc &lt;&lt; 1) ^ 0x04C11DB7;
+            else                  crc &lt;&lt;= 1;
+            if (data &amp; bit)       crc ^= 0x04C11DB7;
+        }
+    }
+    return crc;
+}
+/* command: crc32_core(frame, 4)       bytes 0-15
+   reply:   crc32_core(frame + 2, 5)   bytes 2-21 (copy to aligned memory) */</pre>
+<table>
+  <tr><th class="l">Test input (hex)</th><th>CRC</th><th>Stored as</th></tr>
+  <tr><td class="hex">FE EE 90 80 00 00 00 00 00 00 00 00 00 00 00 00</td><td class="c mono">0x06411E9B</td><td class="c mono">9B 1E 41 06</td></tr>
+  <tr><td class="hex">FE EE 00 00 00 00 00 00 00 00 00 00 00 00 00 00</td><td class="c mono">0x79204680</td><td class="c mono">80 46 20 79</td></tr>
+</table>
+
+<h2>Example Frames</h2>
+<p>All captured from the robot except where noted.</p>
+<table>
+  <tr><th class="l" style="width:24%">Meaning</th><th class="l">Bytes</th></tr>
+  <tr><td>Idle poll, ID 0 (also used to scan a bus)</td><td class="hex">FE EE 00 00 00 00 00 00 00 00 00 00 00 00 00 00 80 46 20 79</td></tr>
+  <tr><td>Run, zero torque, ID 0</td><td class="hex">FE EE 90 80 00 00 00 00 00 00 00 00 00 00 00 00 9B 1E 41 06</td></tr>
+  <tr><td>Run, damping only (KD 25), ID 0</td><td class="hex">FE EE 90 80 00 00 00 00 00 00 00 00 00 00 19 00 54 1E D6 14</td></tr>
+  <tr><td>Run, hold position 25,032 with KP 450, KD 10, ID 0</td><td class="hex">FE EE 90 80 00 00 00 00 C8 61 00 00 C2 01 0A 00 71 DC 7C 64</td></tr>
+</table>
+<div class="keep"><p>Decoding a reply:</p>
+<pre>FC EE 12 24 23 61 FF FF F8 FF C6 3D FD FF
+00 00 00 00 CC 0B 00 C8 25 63 AD 8C
+
+12           ID 2, mode 1 (run)
+24 23        temperatures 36 and 35
+61           97 x 0.5 = 48.5 V
+FF FF        torque   -1
+F8 FF        velocity -8
+C6 3D FD FF  position -180,794
+00 00 00 00  status   0 (no fault)
+CC 0B        3,020 (unknown)
+00 C8        unknown
+25 63 AD 8C  CRC-32 0x8CAD6325 of the 20 bytes from "12" to "C8"</pre></div>
+
+<h1 class="pb">Operating the Motor</h1>
+
+<h2>Modes Used by the G1 Controller</h2>
+<p>The controller never changes the frame type. Robot behaviour is set entirely by the fields of the run-mode command.
+<span class="tag">verified</span></p>
+<table>
+  <tr><th class="l" style="width:24%">Robot state</th><th class="l">Command content</th></tr>
+  <tr><td>Zero torque</td><td>T, W, POS, KP, KD all 0</td></tr>
+  <tr><td>Damping</td><td>KD only. Values seen on arm IDs 0-4: 25, 25, 0, 1, 0</td></tr>
+  <tr><td>Locked standing</td><td>POS = present position, then ramped by the controller toward the standing pose. KP / KD seen on IDs 0-4: 450/10, 300/5, 100/2, 300/5, 20/1</td></tr>
+</table>
+
+<h2>Power-On Sequence of the Robot</h2>
+<p>Times are measured from the first frame on the bus, which appeared roughly a minute after the robot was switched on.</p>
+<table>
+  <tr><th style="width:17%">Time</th><th class="l">Controller</th><th class="l" style="width:33%">Motors</th></tr>
+  <tr><td class="c">0 s</td><td>18 frames, 3-4 per motor: DATA[2] = ID, DATA[3] = 0, T = &#8722;128, all else 0</td><td>All answer in mode 0</td></tr>
+  <tr><td class="c">0-7.0 s</td><td>Silent</td><td>-</td></tr>
+  <tr><td class="c">7.0 s</td><td>Continuous polling starts, mode 0, all fields 0</td><td>Mode 0</td></tr>
+  <tr><td class="c">7.0-7.1 s</td><td>IDs 2 and 3 only: about 114 frames with a fixed 12-byte pattern in DATA[4]-DATA[15]</td><td>IDs 2 and 3 switch from a fixed data block to normal telemetry</td></tr>
+  <tr><td class="c">9.6 s</td><td>FLAG bit set (0x80 + ID)</td><td>Mode 0</td></tr>
+  <tr><td class="c">33.2 s</td><td>MODE = 1 on all motors in the same round (0x90 + ID)</td><td>Report mode 1 from the next frame</td></tr>
+</table>
+<p>So enabling a motor means changing MODE from 0 to 1 in the ordinary command; the motor acknowledges in its reply.</p>
+<div class="note">
+  <svg viewBox="0 0 24 24"><path d="M12 3 2 21h20z" fill="none" stroke="#222" stroke-width="1.6"/><path d="M12 10v5M12 17.5v1" stroke="#222" stroke-width="1.8"/></svg>
+  <p>IDs 2 and 3 of the observed chain do not report position or temperature until they have received their 12-byte pattern;
+  before that, DATA[3]-DATA[13] of their replies hold a fixed block and DATA[14]-DATA[15] read 00 80. The pattern differs
+  between the two motors. It is not known whether it is fixed data or a challenge and response. The three bench motors
+  (IDs 4, 5, 6) needed no such step.</p>
+</div>
+
+<h2>Enabling a Motor Without the Robot Controller</h2>
+<p>Sequence used successfully on bench motors IDs 4, 5, 6 at 24 V:</p>
+<ol>
+  <li>Listen for about 1 s. If any bytes arrive, a controller is present: do not transmit.</li>
+  <li>Scan: send the idle poll (DATA[2] = ID, everything else 0) to IDs 0-14. Motors present answer in mode 0.</li>
+  <li>Poll each motor about 20 times with the idle poll.</li>
+  <li>Poll each motor about 50 times with FLAG set (0x80 + ID), DATA[3] alternating 0x80 / 0x90 every 8 rounds.</li>
+  <li>Send run-mode commands (0x90 + ID) with all fields 0. The reply then shows mode 1 (on the robot, from the very next frame). The joint is now free.</li>
+  <li>Command motion by filling POS, W, T, KP, KD. Keep polling every motor in a steady loop.</li>
+  <li>To stop: command KD only for about 0.5 s if the joint is moving, then send idle polls until the reply shows mode 0.</li>
+</ol>
+<p>Steps 3 and 4 copy the order the robot uses; whether they are required was not tested.</p>
+
+<h2>Status Word</h2>
+<p>DATA[14]-DATA[17] of the reply are 0 in normal operation. Non-zero values seen:</p>
+<table>
+  <tr><th style="width:26%">Value (uint32)</th><th class="l">Situation</th></tr>
+  <tr><td class="c mono">0x00000008</td><td>All three bench motors after an aborted high-speed run that ended with a hard damping brake from top speed on a 24 V bench supply. While it is set the motor stays in mode 0 and ignores MODE = 1. Idle polling did not clear it.</td></tr>
+  <tr><td class="c mono">0x00040000</td><td>Robot IDs 2 and 3 for about 0.4 s during boot, with normal operation afterwards.</td></tr>
+  <tr><td class="c mono">0x00008000</td><td>Robot IDs 2 and 3 before they received their 12-byte pattern (these bytes may not be a status word in that state).</td></tr>
+</table>
+<p>The meaning of individual bits is not known, nor is any command that clears a fault. Whether cycling the power clears
+0x00000008 had not been tested when this guide was written.</p>
+
+<h2>Units</h2>
+<table>
+  <tr><th class="l">Quantity</th><th class="l">Scale</th><th style="width:19%">Basis</th></tr>
+  <tr><td>Position</td><td>2&#960; / 32,768 rad per count (32,768 counts per rotor turn)</td><td class="c">assumed</td></tr>
+  <tr><td>Velocity</td><td>2&#960; / 256 rad/s per count</td><td class="c">assumed</td></tr>
+  <tr><td>Velocity vs position</td><td>1 velocity count = 128 position counts per second (measured 114-124 with a lagging estimator)</td><td class="c">verified</td></tr>
+  <tr><td>Torque</td><td>1 / 256 N&#183;m per count</td><td class="c">assumed</td></tr>
+  <tr><td>Command torque vs reply torque</td><td>Same unit to within the test's resolution: feeding forward the reported friction torque removed it</td><td class="c">verified</td></tr>
+  <tr><td>Bus voltage</td><td>0.5 V per count</td><td class="c">verified</td></tr>
+  <tr><td>KP, KD</td><td>Raw; no physical scale established</td><td class="c">unknown</td></tr>
+</table>
+<p>All quantities refer to the motor rotor, before the joint's reduction gear. The gear ratios were not determined.</p>
+
+<h1>Observed Characteristics</h1>
+<p>Measured on the bench wrist assembly (IDs 4, 5, 6) at 24 V unless stated. These are observations on one unit, not ratings.</p>
+<table>
+  <tr><th class="l" colspan="2">Communication</th></tr>
+  <tr><td style="width:52%">Bit rate</td><td>6,000,000 baud, 8N1</td></tr>
+  <tr><td>Command / reply length</td><td>20 / 26 bytes</td></tr>
+  <tr><td>Polling rate used by the robot</td><td>about 1,313 Hz per motor</td></tr>
+  <tr><td>Polling rate used on the bench</td><td>about 340 Hz per motor (Python, three motors)</td></tr>
+  <tr><td>Reply errors</td><td>1 bad checksum in 1,969,826 replies (robot capture)</td></tr>
+</table>
+<table>
+  <tr><th class="l" colspan="2">Motion</th></tr>
+  <tr><td style="width:52%">Highest speed reached</td><td>about 1,275,000 position counts/s on all three motors (about 39 rotor turns/s on the assumed scale), independent of the command</td></tr>
+  <tr><td>Travel between end stops, ID 4 / 5 / 6</td><td>331,007 / 425,735 / 427,100 counts</td></tr>
+  <tr><td>Gains that gave smooth tracking</td><td>KP 300; KD 40 (ID 4), 80 (IDs 5, 6)</td></tr>
+  <tr><td>Gains too weak to move the joint</td><td>KP 20, KD 1 (IDs 5, 6 also at KP 100, KD 2)</td></tr>
+  <tr><td>Friction, direction-dependent part, ID 4 / 5 / 6</td><td>about 4 / 19 / 12 torque counts</td></tr>
+  <tr><td>Fastest full-range sine that still tracked</td><td>0.8 s period over 80 % of the travel; peak lag 1,505 / 8,656 / 7,266 counts</td></tr>
+  <tr><td>Velocity ripple with the gains above</td><td>3-4 % of peak speed</td></tr>
+</table>
+<table>
+  <tr><th class="l" colspan="2">Telemetry</th></tr>
+  <tr><td style="width:52%">Bus voltage reading</td><td>24.0-24.5 V (bench), 48.0-48.5 V (robot)</td></tr>
+  <tr><td>Temperature readings</td><td>28-39 during these tests</td></tr>
+  <tr><td>Position resolution</td><td>1 count; holds within 1-2 counts of a target at rest on the robot</td></tr>
+</table>
+
+<h1>Open Questions</h1>
+<ul>
+  <li>Meaning of the FLAG bit and of the sequence byte, and whether a motor requires them.</li>
+  <li>The 12-byte pattern needed by some motors at boot: fixed data, or challenge and response.</li>
+  <li>Bit meanings of the status word, and how a latched fault is cleared.</li>
+  <li>Absolute scales of position, velocity, torque, KP and KD; gear ratios.</li>
+  <li>Reply fields DATA[18]-DATA[21].</li>
+  <li>Behaviour when polling stops in run mode (timeout or hold).</li>
+  <li>Whether ID 15 is a broadcast address, and how a motor's ID is assigned.</li>
+</ul>
+
+<div class="keep"><h1>Software</h1>
+<p>A Python driver implementing this guide, <code>g1-joint-motor-sdk</code>, accompanies it.</p>
+<pre>from g1_joint_motor_sdk import MotorBus
+
+with MotorBus() as bus:                    # 6 Mbaud; refuses a busy bus
+    print(bus.scan())                      # {4: MotorState(...), ...}
+    start = bus.enable([4, 5, 6])          # run mode, zero torque
+    for _ in range(1000):                  # hold ID 4 where it is
+        state = bus.command(4, pos=start[4].pos, kp=300, kd=40)
+# on exit: damping brake, then idle</pre></div>
+
+<h1>Revision History</h1>
+<table>
+  <tr><th style="width:14%">Version</th><th style="width:18%">Date</th><th class="l">Changes</th></tr>
+  <tr><td class="c">V0.1</td><td class="c">2026-11-25</td><td>First issue, from one day of captures and bench tests.</td></tr>
+</table>
+
+</body>
+</html>

@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.pyc
+.idea/
+# firmware images and large raw captures stay local
+firmware/*
+!firmware/.gitkeep
+captures/*
+!captures/.gitkeep
+*.egg-info/
+.pytest_cache/
+*.asv
