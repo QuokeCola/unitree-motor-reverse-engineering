@@ -1,4 +1,4 @@
-# G1 joint motor SDK
+# g1motor
 
 Unofficial drivers for the joint motors of the Unitree G1 on their RS-485 bus, in Python, C++
 and MATLAB, with a description of the communication protocol. Reverse engineered from bus
@@ -12,33 +12,58 @@ the onboard controller is the bus master; the drivers refuse to open a bus that 
 | Folder | Contents |
 |---|---|
 | `docs/` | The communication protocol: `G1_Joint_Motor_Protocol_Guide.pdf` (English) and `_zh.pdf` (Chinese), their sources, lab notes, and the Doxygen configuration |
-| `python/` | `g1_joint_motor_sdk` package, the `g1motor` command, tests, examples, and the research tools in `python/tools` |
-| `cpp/` | `g1motor` C++17 library (CMake, no dependencies), tests, examples |
-| `matlab/` | `G1MotorBus` class over a MEX build of the C++ library, tests, example |
+| `python/` | `g1motor` for Python |
+| `cpp/` | `g1motor` for C++17 |
+| `matlab/` | `g1motor` for MATLAB (calls the C++ library through a MEX file) |
 
-The three interfaces have the same calls:
+Each language folder has the same four parts:
+
+| Part | Python | C++ | MATLAB |
+|---|---|---|---|
+| Library | `python/g1motor/` | `cpp/g1motor/` | `matlab/+g1motor/` |
+| Tests | `python/tests/` | `cpp/tests/` | `matlab/tests/` |
+| Examples | `python/examples/` | `cpp/examples/` | `matlab/examples/` |
+| Build | `pyproject.toml` | `CMakeLists.txt` | `build_mex.m` |
+
+and the same names inside: the library is split into `protocol`, `serial_port`, `motor_bus`,
+`joint` and `units`; the tests are `protocol_test`, `joint_test` and `hardware_test`; the examples
+are `scan`, `zero_torque`, `position_hold` and `sine`. (`python/tools` additionally holds the
+research scripts used to reverse engineer the bus.)
+
+## One API in three languages
 
 | | Python | C++ | MATLAB |
 |---|---|---|---|
-| Open | `bus = MotorBus()` | `g1motor::MotorBus bus;` | `bus = G1MotorBus();` |
-| Find motors | `bus.scan()` | `bus.Scan()` | `bus.scan()` |
-| Run mode, zero torque | `bus.enable([4, 5, 6])` | `bus.Enable({4, 5, 6})` | `bus.enable([4 5 6])` |
-| Command | `bus.command(4, pos=p, kp=300, kd=40)` | `bus.Command(4, p, 0, 0, 300, 40)` | `bus.command(4, 'pos', p, 'kp', 300, 'kd', 40)` |
-| Stop (idle brakes the joint) | `bus.disable()` | `bus.Disable()` | `bus.disable()` |
-| Clear a fault | `bus.restart([4])` | `bus.Restart({4})` | `bus.restart(4)` |
+| Open | `bus = g1motor.MotorBus()` | `g1motor::MotorBus bus;` | `bus = g1motor.MotorBus();` |
+| Find motors | `bus.scan()` | `bus.scan()` | `bus.scan()` |
+| Run mode, zero torque | `bus.enable([4, 5, 6])` | `bus.enable({4, 5, 6})` | `bus.enable([4 5 6])` |
+| Command | `bus.command(4, pos, 0, 0, 300, 40)` | `bus.command(4, pos, 0, 0, 300, 40)` | `bus.command(4, pos, 0, 0, 300, 40)` |
+| Stop (idle brakes the joint) | `bus.disable()` | `bus.disable()` | `bus.disable()` |
+| Clear a fault | `bus.restart([4])` | `bus.restart({4})` | `bus.restart(4)` |
+| Joint angle | `bus.joint(4).angle(pos)` | `bus.joint(4).angle(pos)` | `bus.joint(4).angle(pos)` |
+| Checksum | `g1motor.crc32_core(data)` | `g1motor::crc32_core(data, len)` | `g1motor.crc32_core(data)` |
+| Constant | `g1motor.BAUD` | `g1motor::BAUD` | `g1motor.BAUD` |
 
-Values are raw counts. See each folder's README for building, examples and tests.
+Values are raw counts. The full list of names is in each folder's README.
+
+## Naming
+
+One rule in all three languages: functions, methods and variables are `snake_case`, types are
+`PascalCase`, constants are `UPPER_CASE`, files are `snake_case` (a MATLAB class file is named after
+its class). This is the Google Python style. C++ follows the Google C++ guide in everything else
+(include guards, trailing underscore on class members, `clang-format`); its function and constant
+names follow the common rule instead, so that the three interfaces read the same.
 
 ## Tests
 
-Each language has a protocol test that needs no hardware and a hardware test for motors on a
-bus without a controller (it holds the joints in place for 2 s and restarts one motor).
+Each language has two tests that need no hardware and one that needs motors on a bus without a
+controller (it holds the joints in place for 2 s and restarts one motor).
 
-| | Protocol test | Hardware test |
+| | `protocol_test`, `joint_test` | `hardware_test` |
 |---|---|---|
 | Python | `python -m pytest python` | `python python/tests/hardware_test.py` |
-| C++ | `ctest --test-dir cpp/build` | `cpp/build/g1motor_hardware_test` |
-| MATLAB | `protocol_test` (in `matlab/tests`) | `hardware_test` (in `matlab/tests`) |
+| C++ | `ctest --test-dir cpp/build` | `cpp/build/hardware_test` |
+| MATLAB | `protocol_test`, `joint_test` (in `matlab/tests`) | `hardware_test` (in `matlab/tests`) |
 
 ## Documentation
 
@@ -47,19 +72,10 @@ bus without a controller (it holds the joints in place for 2 s and restarts one 
   `doxygen docs/Doxyfile` from the top of the repository; open `docs/api/html/index.html`.
   MATLAB files are read through `docs/doxygen_matlab_filter.py`.
 
-## Code style
-
-Names follow the Google style guides: C++ files are `snake_case.h` / `.cc` with `PascalCase`
-types and functions, `snake_case` variables, a trailing underscore on class members and
-`kPascalCase` constants; Python uses `snake_case` modules and functions, `PascalCase` classes and
-`UPPER_CASE` constants. C++ is formatted with `clang-format` (Google style, `cpp/.clang-format`).
-Google has no MATLAB guide; MATLAB uses a `PascalCase` class with `lowerCamelCase` methods and
-`snake_case` function files. The C++ library uses exceptions, which the Google C++ guide does not.
-
 ## Serial port
 
 The bus runs at 6,000,000 baud, a non-standard rate. No general serial library is used for C++;
-`cpp/src/serial_port.cc` calls each operating system's own interface.
+`cpp/g1motor/serial_port.cc` calls each operating system's own interface.
 
 | System | Method | Status |
 |---|---|---|

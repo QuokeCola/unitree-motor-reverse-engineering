@@ -2,7 +2,7 @@
 
 Scripts used while reverse engineering the bus. They are separate from the SDK package: they have
 their own small frame code (`g1bus.py`) and extra dependencies (`requirements.txt`: numpy,
-pyqtgraph, PySide6). Only `verify_bench.py` uses the SDK.
+pyqtgraph, PySide6). Only `verify_bench.py` uses the `g1motor` package.
 
 | Script | Purpose |
 |---|---|

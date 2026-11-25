@@ -10,11 +10,11 @@ import math
 import sys
 import time
 
-from g1_joint_motor_sdk import joint as joint_lib
-from g1_joint_motor_sdk import motor_bus
-from g1_joint_motor_sdk import protocol
-from g1_joint_motor_sdk import serial_port
-from g1_joint_motor_sdk import units
+from g1motor import joint as joint_lib
+from g1motor import motor_bus
+from g1motor import protocol
+from g1motor import serial_port
+from g1motor import units
 
 
 def _parse_ids(text: str) -> list[int]:
@@ -34,9 +34,9 @@ def _format_state(state: protocol.MotorState) -> str:
     """
     line = (f"id {state.id}: mode {state.mode}  pos {state.pos:8d} "
             f"({units.pos_to_rad(state.pos):8.3f} rad)  vel {state.vel:6d}  "
-            f"tau {state.tau:5d}  {state.voltage:4.1f} V  "
+            f"tau {state.tau:5d}  {state.voltage():4.1f} V  "
             f"coil {state.temp_coil} C  shell {state.temp_shell} C")
-    if state.fault:
+    if state.fault():
         line += f"  FAULT 0x{state.error:x}"
     return line
 
@@ -47,7 +47,7 @@ def run_scan(args: argparse.Namespace) -> int:
     @param args Parsed command line.
     @return Exit code; 1 if no motor answered.
     """
-    with motor_bus.MotorBus(args.port) as bus:
+    with motor_bus.MotorBus(args.port or "") as bus:
         found = bus.scan()
     if not found:
         print("no motors answered on ids 0-14")
@@ -64,7 +64,7 @@ def run_read(args: argparse.Namespace) -> int:
     @return Exit code.
     """
     ids = _parse_ids(args.ids)
-    with motor_bus.MotorBus(args.port) as bus:
+    with motor_bus.MotorBus(args.port or "") as bus:
         if args.zero_torque:
             bus.enable(ids)
         end = time.monotonic() + args.seconds
@@ -91,7 +91,7 @@ def run_limits(args: argparse.Namespace) -> int:
     ids = _parse_ids(args.ids)
     low: dict[int, int] = {}
     high: dict[int, int] = {}
-    with motor_bus.MotorBus(args.port) as bus:
+    with motor_bus.MotorBus(args.port or "") as bus:
         bus.enable(ids)
         print(f"joints are free for {args.seconds:.0f} s: move each one to "
               "both end stops", flush=True)
@@ -116,7 +116,7 @@ def run_limits(args: argparse.Namespace) -> int:
         ratio = joint_lib.WRIST_GEAR_RATIOS.get(motor_id)
         if ratio and high[motor_id] > low[motor_id]:
             travel = joint_lib.Joint(ratio, low[motor_id],
-                                     high[motor_id]).travel
+                                     high[motor_id]).travel()
             line += (f" = {math.degrees(travel):.0f} deg at the output "
                      f"({ratio}:1)")
         print(line)
@@ -135,7 +135,7 @@ def run_restart(args: argparse.Namespace) -> int:
     @return Exit code.
     """
     ids = _parse_ids(args.ids)
-    with motor_bus.MotorBus(args.port) as bus:
+    with motor_bus.MotorBus(args.port or "") as bus:
         before = {motor_id: bus.read(motor_id) for motor_id in ids}
         after = bus.restart(ids)
     for motor_id in ids:
@@ -160,13 +160,14 @@ def run_sniff(args: argparse.Namespace) -> int:
     @param args Parsed command line.
     @return Exit code.
     """
-    port = serial_port.open_port(args.port)
+    port = serial_port.SerialPort()
+    port.open(args.port or serial_port.SerialPort.find_port(), protocol.BAUD)
     end = time.monotonic() + args.seconds
     total = 0
     with open(args.out, "wb") as out_file:
         try:
             while time.monotonic() < end:
-                chunk = port.read(65536)
+                chunk = port.read(65536, 0.001)
                 out_file.write(chunk)
                 total += len(chunk)
         except KeyboardInterrupt:

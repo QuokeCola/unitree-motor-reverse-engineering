@@ -3,15 +3,14 @@
 # Output: docs/api/html/index.html (not tracked by git).
 
 PROJECT_NAME           = "G1 joint motor SDK"
-PROJECT_BRIEF          = "Unofficial drivers for Unitree G1 joint motors (Python, C++, MATLAB)"
+PROJECT_BRIEF          = "g1motor: unofficial drivers for Unitree G1 joint motors (Python, C++, MATLAB)"
 OUTPUT_DIRECTORY       = docs/api
 USE_MDFILE_AS_MAINPAGE = README.md
 
 INPUT                  = README.md \
-                         cpp/include \
-                         cpp/src \
+                         cpp/g1motor \
                          cpp/tests \
-                         python/g1_joint_motor_sdk \
+                         python/g1motor \
                          python/tests \
                          matlab \
                          docs/doxygen_matlab_filter.py

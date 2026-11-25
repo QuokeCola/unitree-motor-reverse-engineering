@@ -9,15 +9,15 @@ import sys
 
 import pytest
 
-from g1_joint_motor_sdk import Joint
+from g1motor import Joint
 
 
 def test_turn_counts():
     """!
     @brief Counts per output turn for 16:1 and 25:1.
     """
-    assert Joint(16).turn_counts == 524288
-    assert Joint(25).turn_counts == 819200
+    assert Joint(16).turn_counts() == 524288
+    assert Joint(25).turn_counts() == 819200
 
 
 def test_sync_follows_whole_turn_shift():
@@ -51,7 +51,7 @@ def test_angle_round_trip_and_travel():
     joint = Joint(16, low=-94259, high=236635)
     assert joint.angle(joint.zero) == 0
     assert joint.counts(joint.angle(123456)) == 123456
-    assert math.degrees(joint.travel) == pytest.approx(227.2, abs=0.1)
+    assert math.degrees(joint.travel()) == pytest.approx(227.2, abs=0.1)
     assert joint.angle(joint.zero + 524288) == pytest.approx(2 * math.pi)
 
 

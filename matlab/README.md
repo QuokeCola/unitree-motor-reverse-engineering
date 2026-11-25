@@ -1,31 +1,73 @@
-# MATLAB interface
+# g1motor for MATLAB
 
-`G1MotorBus` class over a MEX build of the C++ library in `../cpp`. MATLAB R2018a or later and
-a C++17 compiler set up for MEX (`mex -setup C++`).
+MATLAB R2018a or later. The package calls the C++ library in `../cpp` through a MEX file, so a
+C++17 compiler set up for MEX is needed (`mex -setup C++`).
+
+## Build
 
 ```matlab
-build_mex                              % once, and after the C++ sources change
-bus = G1MotorBus();                    % or G1MotorBus('COM5')
-start = bus.enable([4 5 6]);           % run mode, zero torque
-state = bus.command(4, 'pos', start(1).pos, 'kp', 300, 'kd', 40);   % call in a loop
-bus.disable();                         % idle brakes the joints
-delete(bus)
+build_mex                       % once, and after the C++ sources change
 ```
 
-Methods: `scan`, `enable`, `disable`, `restart`, `command`, `commandRaw` (positional arguments,
-faster in a loop), `read`, `setJoint`, `getJoint`, `jointAngle`, `listen`. States are structs with
-`id`, `mode`, `pos`, `vel`, `tau`, `temp_coil`, `temp_shell`, `voltage`, `error`, `fault`. Only one
-bus can be open per MATLAB session.
+## Use
 
-## Tests and example
+```matlab
+bus = g1motor.MotorBus();                        % the only FTDI adapter, 6 Mbaud
+start = bus.enable([4 5 6]);                     % run mode, zero torque: joints are free
+start4 = start(4);
+for k = 1:1000                                   % hold joint 4 where it is
+    state = bus.command(4, start4.pos, 0, 0, 300, 40);
+end
+bus.close();                                     % back to idle, which brakes the joints
+```
+
+## API
+
+Everything is in the package `+g1motor`. The names are the same in Python and C++.
+
+| Name | What it does |
+|---|---|
+| `MotorBus(port, reply_timeout, check_silent)` | Opens the adapter. Raises `BusBusyError` if the bus is not silent. |
+| `bus.scan(tries)` | Polls ids 0-14 with the idle frame; returns the motors found, by id. |
+| `bus.enable(ids)` | Run mode with zero torque. Raises `MotorFaultError` if a motor refuses. |
+| `bus.command(id, pos, vel, tau, kp, kd)` | One hybrid command in raw counts; returns the fresh state. |
+| `bus.read(id)` | State only. On an enabled motor this sends zero torque, which drops a hold. |
+| `bus.disable(ids)` | Back to idle, which brakes the joint. No ids = every enabled motor. |
+| `bus.restart(ids, wait)` | Mode 7: clears a latched fault; about 0.3 s. Positions may come back shifted. |
+| `bus.set_joint(id, joint)`, `bus.joint(id)`, `bus.is_enabled(id)` | Attach and read back a `Joint`; targets are limited to its end stops. |
+| `bus.transfer(cmd)`, `bus.listen(seconds)`, `bus.close()` | One raw exchange; receive without sending; back to idle and close. |
+| `MotorCmd`: `encode()`, `decode(frame)` | Command frame. Fields `id mode tau vel pos kp kd flag byte3`. |
+| `MotorState`: `decode(frame)`, `voltage()`, `fault()` | Reply frame. Fields `id mode tau vel pos temp_coil temp_shell voltage_raw error word18 byte20 byte21`. |
+| `Joint(gear_ratio, low, high)`: `turn_counts()`, `travel()`, `sync(pos)`, `angle(pos)`, `counts(angle)`, `speed(vel)`, `clamp(pos)` | Gear ratio, end stops, software zero, output-shaft angles. |
+| `load_joints(path, gear_ratios, margin)` | Joints from an end-stop file. |
+| `crc32_core(data)`, `find_reply(buffer)` | Checksum; first valid reply in a buffer. |
+| `units`: `pos_to_rad`, `rad_to_pos`, `vel_to_rads`, `rads_to_vel`, `pos_rate_to_vel`, `tau_to_nm`, `nm_to_tau` | Rotor-side conversions (torque scale assumed). |
+| `BAUD`, `CMD_LEN`, `REPLY_LEN`, `BROADCAST_ID`, `MODE_IDLE`, `MODE_RUN`, `MODE_RESTART`, `COUNTS_PER_ROTOR_TURN`, `WRIST_GEAR_RATIOS` | Constants. |
+
+The motor applies `tau + kp * (pos - measured) + kd * (vel - measured)` and keeps applying the last
+command. Call `command` for every enabled motor in a steady loop; a motor that is no longer polled
+drops to idle after 0.5-1 s. End stops in counts must be re-checked after every power-on, because
+the position reading can shift by whole output turns.
+
+MATLAB specifics: `scan`, `enable`, `restart` and `load_joints` return a `containers.Map` keyed by
+motor id; a missing reply is `[]`; errors have the identifiers `g1motor:BusBusyError`,
+`g1motor:MotorFaultError`, `g1motor:ValueError`, `g1motor:RuntimeError`; `MotorCmd` takes name-value
+pairs (`g1motor.MotorCmd('id', 4, 'mode', 1)`); constants are called without parentheses
+(`g1motor.BAUD`). There is no `SerialPort`; the serial port lives in the MEX file. Only one bus can
+be open per MATLAB session.
+
+## Tests
 
 ```matlab
 addpath tests
-protocol_test          % frame encode and decode through the MEX file, no hardware
+protocol_test          % no hardware
+joint_test             % no hardware
 hardware_test          % motors on a bus without a controller
 ```
 
-Example: `examples/example_hold.m`.
+## Examples
+
+`examples/scan.m`, `zero_torque.m`, `position_hold.m`, `sine.m`.
 
 `build_mex` accepts a file that `mex` links but then rejects in its final check, provided the
-file loads and encodes a frame; this happens with very new compilers.
+package can use it; this happens with very new compilers.

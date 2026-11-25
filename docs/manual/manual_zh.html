@@ -410,17 +410,17 @@ CC 0B        3,020（未知）
 </ul></div>
 
 <div class="keep"><h1>软件</h1>
-<p>随本文档提供按此协议实现的 Python、C++ 和 MATLAB 驱动，三者的调用方式相同。以 Python 为例：</p>
-<pre>from g1_joint_motor_sdk import MotorBus, Joint
+<p>随本文档提供按此协议实现的 Python、C++ 和 MATLAB 驱动（<code>g1motor</code>），三者的命名相同。以 Python 为例：</p>
+<pre>from g1motor import MotorBus, Joint
 
 with MotorBus() as bus:                    # 6 Mbaud；总线被占用时拒绝打开
     print(bus.scan())                      # {4: MotorState(...), ...}
     bus.restart([4])                       # 模式 7：清除锁存的故障
     bus.set_joint(4, Joint(16, low, high)) # 减速比、以计数表示的限位
     bus.enable([4])                        # 运行模式，零力矩
-    target = bus.joints[4].counts(0.5)     # 输出轴相对零点 0.5 rad
+    target = bus.joint(4).counts(0.5)      # 输出轴相对零点 0.5 rad
     for _ in range(1000):
-        state = bus.command(4, pos=target, kp=300, kd=40)
+        state = bus.command(4, target, 0, 0, 300, 40)
 # 退出时：回到空闲模式，由其对关节制动</pre></div>
 
 <h1>修订记录</h1>

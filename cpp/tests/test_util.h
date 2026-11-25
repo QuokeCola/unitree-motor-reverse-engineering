@@ -16,7 +16,7 @@ namespace g1motor_test {
 inline int g_failures = 0;
 
 /// @brief Converts a hex string such as "feee00" to bytes.
-inline std::vector<std::uint8_t> Hex(const std::string& text) {
+inline std::vector<std::uint8_t> hex(const std::string& text) {
   std::vector<std::uint8_t> bytes;
   for (std::size_t i = 0; i + 1 < text.size(); i += 2) {
     bytes.push_back(static_cast<std::uint8_t>(
@@ -26,7 +26,7 @@ inline std::vector<std::uint8_t> Hex(const std::string& text) {
 }
 
 /// @brief Prints the result and returns the process exit code.
-inline int Finish(const char* name) {
+inline int finish(const char* name) {
   if (g_failures == 0) {
     std::printf("%s: all checks passed\n", name);
     return 0;

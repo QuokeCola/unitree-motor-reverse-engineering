@@ -1,22 +1,16 @@
 /// @file g1motor_mex.cc
-/// @brief MEX gateway from MATLAB to the g1motor C++ library.
+/// @brief MEX gateway from the MATLAB package +g1motor to the C++ library.
 ///
-/// Used through G1MotorBus.m; build with build_mex.m. Commands:
+/// Called only by the files in +g1motor; build with build_mex.m. Motor states
+/// cross the boundary as rows of 12 numbers and commands as rows of 9:
 /// @code
-///   g1motor_mex('open', port)       port '' = the only FTDI adapter (Linux)
-///   g1motor_mex('close')
-///   s = g1motor_mex('scan')         struct array, one element per motor
-///   s = g1motor_mex('enable', ids)
-///   g1motor_mex('disable', ids)     ids [] = every enabled motor
-///   s = g1motor_mex('restart', ids)
-///   s = g1motor_mex('command', id, pos, vel, tau, kp, kd)
-///   s = g1motor_mex('read', id)
-///   g1motor_mex('set_joint', id, gear_ratio, low, high)
-///   j = g1motor_mex('get_joint', id)
-///   b = g1motor_mex('listen', seconds)        uint8 row, nothing sent
-///   f = g1motor_mex('encode', cmd_struct)     uint8 row, no bus needed
-///   s = g1motor_mex('decode', frame_bytes)    state struct, no bus needed
+///   state row: id mode tau vel pos temp_coil temp_shell voltage_raw error
+///              word18 byte20 byte21
+///   cmd row:   id mode tau vel pos kp kd flag byte3
 /// @endcode
+/// Commands: open, close, listen, transfer, scan, read, enable, disable,
+/// restart, command, is_enabled (these need an open bus), and encode,
+/// decode_cmd, decode, find_reply, crc (these do not).
 
 #include <cmath>
 #include <cstring>
@@ -36,174 +30,192 @@ namespace {
 /// The one bus of this MATLAB session.
 std::unique_ptr<g1motor::MotorBus> g_bus;
 
-/// Field names of the state struct returned to MATLAB.
-const char* kStateFields[] = {"id",    "mode",      "pos",        "vel",
-                              "tau",   "temp_coil", "temp_shell", "voltage",
-                              "error", "fault"};
-/// Number of entries in kStateFields.
-constexpr int kNumStateFields = 10;
+/// Number of values in a state row.
+constexpr int STATE_WIDTH = 12;
+/// Number of values in a command row.
+constexpr int CMD_WIDTH = 9;
 
-/// Writes one motor state into element `index` of a struct array.
-void FillState(mxArray* array, mwIndex index, const g1motor::MotorState& s) {
-  const double values[] = {
+/// Writes one motor state into row `row` of a matrix with `rows` rows.
+void fill_state(double* data, mwSize rows, mwSize row,
+                const g1motor::MotorState& s) {
+  const double values[STATE_WIDTH] = {
       static_cast<double>(s.id),         static_cast<double>(s.mode),
-      static_cast<double>(s.pos),        static_cast<double>(s.vel),
-      static_cast<double>(s.tau),        static_cast<double>(s.temp_coil),
-      static_cast<double>(s.temp_shell), s.voltage(),
-      static_cast<double>(s.error)};
-  for (int field = 0; field < 9; ++field) {
-    mxSetFieldByNumber(array, index, field,
-                       mxCreateDoubleScalar(values[field]));
+      static_cast<double>(s.tau),        static_cast<double>(s.vel),
+      static_cast<double>(s.pos),        static_cast<double>(s.temp_coil),
+      static_cast<double>(s.temp_shell), static_cast<double>(s.voltage_raw),
+      static_cast<double>(s.error),      static_cast<double>(s.word18),
+      static_cast<double>(s.byte20),     static_cast<double>(s.byte21)};
+  for (int column = 0; column < STATE_WIDTH; ++column) {
+    data[row + rows * column] = values[column];
   }
-  mxSetFieldByNumber(array, index, 9, mxCreateLogicalScalar(s.fault()));
 }
 
-/// Converts several states to a 1-by-N struct array.
-mxArray* StatesToStruct(const std::map<int, g1motor::MotorState>& states) {
-  mxArray* array =
-      mxCreateStructMatrix(1, states.size(), kNumStateFields, kStateFields);
-  mwIndex index = 0;
-  for (const auto& entry : states) FillState(array, index++, entry.second);
-  return array;
+/// @return An N-by-12 matrix with one row per motor.
+mxArray* states_to_matrix(const std::map<int, g1motor::MotorState>& states) {
+  mxArray* matrix = mxCreateDoubleMatrix(states.size(), STATE_WIDTH, mxREAL);
+  mwSize row = 0;
+  for (const auto& entry : states) {
+    fill_state(mxGetPr(matrix), states.size(), row++, entry.second);
+  }
+  return matrix;
 }
 
-/// Converts an optional state to a 1-by-1 or empty struct.
-mxArray* StateToStruct(const std::optional<g1motor::MotorState>& state) {
-  mxArray* array =
-      mxCreateStructMatrix(1, state ? 1 : 0, kNumStateFields, kStateFields);
-  if (state) FillState(array, 0, *state);
-  return array;
+/// @return A 1-by-12 row, or a 0-by-12 matrix if there is no state.
+mxArray* state_to_matrix(const std::optional<g1motor::MotorState>& state) {
+  mxArray* matrix = mxCreateDoubleMatrix(state ? 1 : 0, STATE_WIDTH, mxREAL);
+  if (state) fill_state(mxGetPr(matrix), 1, 0, *state);
+  return matrix;
 }
 
-/// Reads a numeric array as a list of motor ids.
-std::vector<int> ToIds(const mxArray* array) {
-  if (!mxIsNumeric(array)) throw std::runtime_error("ids must be numeric");
-  std::vector<int> ids;
+/// @return The values of a numeric array as integers.
+std::vector<int> to_ints(const mxArray* array) {
+  if (!mxIsNumeric(array)) throw std::invalid_argument("expected numbers");
+  std::vector<int> values;
   const mwSize count = mxGetNumberOfElements(array);
   for (mwSize i = 0; i < count; ++i) {
-    ids.push_back(static_cast<int>(std::llround(mxGetPr(array)[i])));
+    values.push_back(static_cast<int>(std::llround(mxGetPr(array)[i])));
   }
-  return ids;
+  return values;
 }
 
-/// Reads a numeric scalar.
-double ToScalar(const mxArray* array) {
+/// @return The value of a numeric scalar.
+double to_scalar(const mxArray* array) {
   if (!mxIsNumeric(array) || mxGetNumberOfElements(array) != 1) {
-    throw std::runtime_error("expected a numeric scalar");
+    throw std::invalid_argument("expected a numeric scalar");
   }
   return mxGetScalar(array);
 }
 
-/// Reads a numeric scalar as an integer.
-int ToInt(const mxArray* array) {
-  return static_cast<int>(std::llround(ToScalar(array)));
+/// @return The value of a numeric scalar as an integer.
+int to_int(const mxArray* array) {
+  return static_cast<int>(std::llround(to_scalar(array)));
 }
 
-/// Reads a field of a struct as an integer; 0 if the field is missing.
-int FieldOr0(const mxArray* s, const char* name) {
-  const mxArray* field = mxGetField(s, 0, name);
-  return field ? ToInt(field) : 0;
+/// @return The command described by a 9-value row.
+g1motor::MotorCmd to_cmd(const mxArray* array) {
+  const auto v = to_ints(array);
+  if (v.size() != CMD_WIDTH) throw std::invalid_argument("bad command row");
+  g1motor::MotorCmd cmd;
+  cmd.id = v[0];
+  cmd.mode = v[1];
+  cmd.tau = v[2];
+  cmd.vel = v[3];
+  cmd.pos = v[4];
+  cmd.kp = v[5];
+  cmd.kd = v[6];
+  cmd.flag = v[7] != 0;
+  cmd.byte3 = static_cast<std::uint8_t>(v[8]);
+  return cmd;
+}
+
+/// @return The bytes of a uint8 array.
+std::vector<std::uint8_t> to_bytes(const mxArray* array) {
+  if (!mxIsUint8(array)) throw std::invalid_argument("expected uint8 bytes");
+  const auto* data = static_cast<const std::uint8_t*>(mxGetData(array));
+  return std::vector<std::uint8_t>(data, data + mxGetNumberOfElements(array));
+}
+
+/// @return A uint8 row holding the given bytes.
+mxArray* bytes_to_array(const std::uint8_t* data, std::size_t len) {
+  mxArray* array = mxCreateNumericMatrix(1, len, mxUINT8_CLASS, mxREAL);
+  if (len > 0) std::memcpy(mxGetData(array), data, len);
+  return array;
 }
 
 /// Throws if fewer than `needed` arguments were given.
-void RequireArgs(int nrhs, int needed) {
-  if (nrhs < needed) throw std::runtime_error("not enough arguments");
+void require_args(int nrhs, int needed) {
+  if (nrhs < needed) throw std::invalid_argument("not enough arguments");
 }
 
 /// @return The open bus; throws if there is none.
-g1motor::MotorBus& Bus() {
+g1motor::MotorBus& bus() {
   if (!g_bus) throw std::runtime_error("bus is not open");
   return *g_bus;
 }
 
 /// Closes the bus when MATLAB clears the MEX file or exits.
-void CloseAtExit() { g_bus.reset(); }
+void close_at_exit() { g_bus.reset(); }
 
 /// Runs one command; throws on any error.
-void Dispatch(const std::string& command, mxArray* plhs[], int nrhs,
+void dispatch(const std::string& command, mxArray* plhs[], int nrhs,
               const mxArray* prhs[]) {
   if (command == "open") {
-    std::string port;
-    if (nrhs > 1 && mxIsChar(prhs[1])) {
-      char* text = mxArrayToString(prhs[1]);
-      port = text;
-      mxFree(text);
-    }
+    require_args(nrhs, 4);
+    char* text = mxArrayToString(prhs[1]);
+    const std::string port = text ? text : "";
+    mxFree(text);
     g_bus.reset();
-    g_bus = std::make_unique<g1motor::MotorBus>(port);
-    mexAtExit(CloseAtExit);
+    g_bus = std::make_unique<g1motor::MotorBus>(port, to_scalar(prhs[2]),
+                                                to_scalar(prhs[3]) != 0);
+    mexAtExit(close_at_exit);
   } else if (command == "close") {
     g_bus.reset();
-  } else if (command == "scan") {
-    plhs[0] = StatesToStruct(Bus().Scan());
-  } else if (command == "enable") {
-    RequireArgs(nrhs, 2);
-    plhs[0] = StatesToStruct(Bus().Enable(ToIds(prhs[1])));
-  } else if (command == "disable") {
-    Bus().Disable(nrhs > 1 ? ToIds(prhs[1]) : std::vector<int>{});
-  } else if (command == "restart") {
-    RequireArgs(nrhs, 2);
-    plhs[0] = StatesToStruct(Bus().Restart(ToIds(prhs[1])));
-  } else if (command == "command") {
-    RequireArgs(nrhs, 7);
-    plhs[0] = StateToStruct(Bus().Command(
-        ToInt(prhs[1]),
-        static_cast<std::int32_t>(std::llround(ToScalar(prhs[2]))),
-        ToInt(prhs[3]), ToInt(prhs[4]), ToInt(prhs[5]), ToInt(prhs[6])));
-  } else if (command == "read") {
-    RequireArgs(nrhs, 2);
-    plhs[0] = StateToStruct(Bus().Read(ToInt(prhs[1])));
-  } else if (command == "set_joint") {
-    RequireArgs(nrhs, 5);
-    Bus().set_joint(
-        ToInt(prhs[1]),
-        g1motor::Joint(ToScalar(prhs[2]), std::llround(ToScalar(prhs[3])),
-                       std::llround(ToScalar(prhs[4]))));
-  } else if (command == "get_joint") {
-    RequireArgs(nrhs, 2);
-    const g1motor::Joint& joint = Bus().joint(ToInt(prhs[1]));
-    const char* fields[] = {"gear_ratio", "low", "high", "zero", "turn_counts"};
-    plhs[0] = mxCreateStructMatrix(1, 1, 5, fields);
-    const double values[] = {
-        joint.gear_ratio, joint.low ? static_cast<double>(*joint.low) : NAN,
-        joint.high ? static_cast<double>(*joint.high) : NAN,
-        static_cast<double>(joint.zero),
-        static_cast<double>(joint.turn_counts())};
-    for (int field = 0; field < 5; ++field) {
-      mxSetFieldByNumber(plhs[0], 0, field,
-                         mxCreateDoubleScalar(values[field]));
-    }
   } else if (command == "listen") {
-    RequireArgs(nrhs, 2);
-    const auto bytes = Bus().Listen(ToScalar(prhs[1]));
-    plhs[0] = mxCreateNumericMatrix(1, bytes.size(), mxUINT8_CLASS, mxREAL);
-    if (!bytes.empty()) {
-      std::memcpy(mxGetData(plhs[0]), bytes.data(), bytes.size());
-    }
+    require_args(nrhs, 2);
+    const auto bytes = bus().listen(to_scalar(prhs[1]));
+    plhs[0] = bytes_to_array(bytes.data(), bytes.size());
+  } else if (command == "transfer") {
+    require_args(nrhs, 2);
+    plhs[0] = state_to_matrix(bus().transfer(to_cmd(prhs[1])));
+  } else if (command == "scan") {
+    require_args(nrhs, 2);
+    plhs[0] = states_to_matrix(bus().scan(to_int(prhs[1])));
+  } else if (command == "read") {
+    require_args(nrhs, 2);
+    plhs[0] = state_to_matrix(bus().read(to_int(prhs[1])));
+  } else if (command == "enable") {
+    require_args(nrhs, 2);
+    plhs[0] = states_to_matrix(bus().enable(to_ints(prhs[1])));
+  } else if (command == "disable") {
+    require_args(nrhs, 2);
+    bus().disable(to_ints(prhs[1]));
+  } else if (command == "restart") {
+    require_args(nrhs, 3);
+    plhs[0] =
+        states_to_matrix(bus().restart(to_ints(prhs[1]), to_scalar(prhs[2])));
+  } else if (command == "command") {
+    require_args(nrhs, 7);
+    plhs[0] = state_to_matrix(bus().command(
+        to_int(prhs[1]),
+        static_cast<std::int32_t>(std::llround(to_scalar(prhs[2]))),
+        to_int(prhs[3]), to_int(prhs[4]), to_int(prhs[5]), to_int(prhs[6])));
+  } else if (command == "is_enabled") {
+    require_args(nrhs, 2);
+    plhs[0] = mxCreateLogicalScalar(bus().is_enabled(to_int(prhs[1])));
   } else if (command == "encode") {
-    RequireArgs(nrhs, 2);
-    if (!mxIsStruct(prhs[1])) throw std::runtime_error("expected a struct");
-    g1motor::MotorCmd cmd;
-    cmd.id = FieldOr0(prhs[1], "id");
-    cmd.mode = FieldOr0(prhs[1], "mode");
-    cmd.tau = FieldOr0(prhs[1], "tau");
-    cmd.vel = FieldOr0(prhs[1], "vel");
-    cmd.pos = FieldOr0(prhs[1], "pos");
-    cmd.kp = FieldOr0(prhs[1], "kp");
-    cmd.kd = FieldOr0(prhs[1], "kd");
-    cmd.flag = FieldOr0(prhs[1], "flag") != 0;
-    cmd.byte3 = static_cast<std::uint8_t>(FieldOr0(prhs[1], "byte3"));
-    const auto frame = cmd.Encode();
-    plhs[0] = mxCreateNumericMatrix(1, frame.size(), mxUINT8_CLASS, mxREAL);
-    std::memcpy(mxGetData(plhs[0]), frame.data(), frame.size());
+    require_args(nrhs, 2);
+    const auto frame = to_cmd(prhs[1]).encode();
+    plhs[0] = bytes_to_array(frame.data(), frame.size());
+  } else if (command == "decode_cmd") {
+    require_args(nrhs, 2);
+    const auto bytes = to_bytes(prhs[1]);
+    const auto cmd = g1motor::MotorCmd::decode(bytes.data(), bytes.size());
+    plhs[0] = mxCreateDoubleMatrix(cmd ? 1 : 0, CMD_WIDTH, mxREAL);
+    if (cmd) {
+      const double values[CMD_WIDTH] = {
+          static_cast<double>(cmd->id),   static_cast<double>(cmd->mode),
+          static_cast<double>(cmd->tau),  static_cast<double>(cmd->vel),
+          static_cast<double>(cmd->pos),  static_cast<double>(cmd->kp),
+          static_cast<double>(cmd->kd),   cmd->flag ? 1.0 : 0.0,
+          static_cast<double>(cmd->byte3)};
+      std::memcpy(mxGetPr(plhs[0]), values, sizeof(values));
+    }
   } else if (command == "decode") {
-    RequireArgs(nrhs, 2);
-    if (!mxIsUint8(prhs[1])) throw std::runtime_error("expected uint8 bytes");
-    plhs[0] = StateToStruct(g1motor::MotorState::Decode(
-        static_cast<const std::uint8_t*>(mxGetData(prhs[1])),
-        mxGetNumberOfElements(prhs[1])));
+    require_args(nrhs, 2);
+    const auto bytes = to_bytes(prhs[1]);
+    plhs[0] = state_to_matrix(
+        g1motor::MotorState::decode(bytes.data(), bytes.size()));
+  } else if (command == "find_reply") {
+    require_args(nrhs, 2);
+    const auto bytes = to_bytes(prhs[1]);
+    plhs[0] = state_to_matrix(g1motor::find_reply(bytes.data(), bytes.size()));
+  } else if (command == "crc") {
+    require_args(nrhs, 2);
+    const auto bytes = to_bytes(prhs[1]);
+    plhs[0] = mxCreateDoubleScalar(
+        static_cast<double>(g1motor::crc32_core(bytes.data(), bytes.size())));
   } else {
-    throw std::runtime_error("unknown command '" + command + "'");
+    throw std::invalid_argument("unknown command '" + command + "'");
   }
 }
 
@@ -214,17 +226,28 @@ void mexFunction(int nlhs, mxArray* plhs[], int nrhs, const mxArray* prhs[]) {
   (void)nlhs;
   // The message is kept outside the try block so that C++ objects are
   // destroyed before mexErrMsgIdAndTxt jumps back into MATLAB.
-  std::string error;
+  std::string id;
+  std::string message;
   try {
     if (nrhs < 1 || !mxIsChar(prhs[0])) {
-      throw std::runtime_error("first argument must be a command name");
+      throw std::invalid_argument("first argument must be a command name");
     }
     char* text = mxArrayToString(prhs[0]);
     const std::string command(text);
     mxFree(text);
-    Dispatch(command, plhs, nrhs, prhs);
+    dispatch(command, plhs, nrhs, prhs);
+  } catch (const g1motor::BusBusyError& e) {
+    id = "g1motor:BusBusyError";
+    message = e.what();
+  } catch (const g1motor::MotorFaultError& e) {
+    id = "g1motor:MotorFaultError";
+    message = e.what();
+  } catch (const std::logic_error& e) {  // invalid_argument, out_of_range
+    id = "g1motor:ValueError";
+    message = e.what();
   } catch (const std::exception& e) {
-    error = e.what();
+    id = "g1motor:RuntimeError";
+    message = e.what();
   }
-  if (!error.empty()) mexErrMsgIdAndTxt("g1motor:error", "%s", error.c_str());
+  if (!id.empty()) mexErrMsgIdAndTxt(id.c_str(), "%s", message.c_str());
 }

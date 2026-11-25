@@ -6,48 +6,66 @@
 %> Errors on the first failed check.
 
 %> @brief Runs the live test.
-%> @param port Device name; omit for the only FTDI adapter (Linux).
+%> @param port Device name; omit for the only FTDI adapter.
 function hardware_test(port)
 if nargin < 1, port = ''; end
 addpath(fullfile(fileparts(mfilename('fullpath')), '..'));
-bus = G1MotorBus(port);
-cleanup = onCleanup(@() delete(bus));
+bus = g1motor.MotorBus(port);
+cleanup = onCleanup(@() bus.close());
 
 found = bus.scan();
-assert(~isempty(found), 'no motor answered');
-ids = [found.id];
-assert(all([found.mode] == 0), 'idle reply should report mode 0');
-assert(all([found.voltage] > 10 & [found.voltage] < 60));
-assert(all([found.temp_coil] >= [found.temp_shell]));
-disp(struct2table(found));
-if any([found.fault]), bus.restart(ids); end
+assert(found.Count > 0, 'no motor answered');
+ids = cell2mat(keys(found));
+any_fault = false;
+for id = ids
+    state = found(id);
+    assert(state.mode == g1motor.MODE_IDLE, 'idle reply reports mode 0');
+    assert(state.voltage() > 10 && state.voltage() < 60);
+    assert(state.temp_coil >= state.temp_shell);
+    any_fault = any_fault || state.fault();
+    fprintf('id %d: pos %d, %.1f V, status 0x%x\n', id, state.pos, ...
+            state.voltage(), state.error);
+end
+if any_fault, bus.restart(ids); end
+
+absent = mod(ids(1) + 7, 15);
+if ~isKey(found, absent)
+    assert(isempty(bus.transfer(g1motor.MotorCmd('id', absent))), ...
+           'an absent id stays silent');
+end
 
 start = bus.enable(ids);
-assert(all([start.mode] == 1), 'enable should reach run mode');
+target = zeros(size(ids));
+for k = 1:numel(ids)
+    state = start(ids(k));
+    assert(state.mode == g1motor.MODE_RUN, 'enable reaches run mode');
+    target(k) = state.pos;
+end
 
-target = [start.pos];
-worst = 0;
+worst_error = 0;
 cycles = 0;
 timer = tic;
 while toc(timer) < 2
-    cycles = cycles + 1;
     for k = 1:numel(ids)
         kd = 80 - 40 * (ids(k) == 4);
-        state = bus.commandRaw(ids(k), target(k), 0, 0, 300, kd);
-        assert(~isempty(state), 'command got no reply');
-        worst = max(worst, abs(state.pos - target(k)));
+        state = bus.command(ids(k), target(k), 0, 0, 300, kd);
+        assert(~isempty(state), 'command gets a reply');
+        worst_error = max(worst_error, abs(state.pos - target(k)));
     end
+    cycles = cycles + 1;
 end
 fprintf('hold: largest error %d counts, %.0f exchanges/s per motor\n', ...
-        worst, cycles / 2);
-assert(worst < 600, 'position hold drifted');
-assert(cycles / 2 > 100, 'polling rate too low');
+        worst_error, cycles / 2);
+assert(worst_error < 600, 'position hold stays on target');
+assert(cycles / 2 > 100, 'polling rate above 100 per second');
 
 bus.disable();
 idle = bus.read(ids(1));
-assert(idle.mode == 0, 'disable should return to idle');
+assert(idle.mode == g1motor.MODE_IDLE, 'disable returns to idle');
 
 after = bus.restart(ids(1));
-assert(~isempty(after) && after.mode == 0 && ~after.fault);
+assert(isKey(after, ids(1)), 'motor answers after restart');
+state = after(ids(1));
+assert(state.mode == g1motor.MODE_IDLE && ~state.fault());
 disp('hardware_test: all checks passed');
 end

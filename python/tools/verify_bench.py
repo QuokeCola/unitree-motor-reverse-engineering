@@ -15,7 +15,7 @@ import subprocess
 import sys
 import time
 
-from g1_joint_motor_sdk import MODE_RESTART, MODE_RUN, MotorBus, MotorCmd, load_joints
+from g1motor import MODE_RESTART, MODE_RUN, MotorBus, MotorCmd, load_joints
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 PY = sys.executable
@@ -88,13 +88,13 @@ check("scan finds the motors; idle reply mode 0", sorted(found) == IDS and all(s
       f"ids {sorted(found)}, modes {[s.mode for s in found.values()]}")
 if sorted(found) != IDS:
     sys.exit("expected ids 4, 5, 6 on a bus without a controller")
-if any(s.fault for s in found.values()):
+if any(s.fault() for s in found.values()):
     print("a motor reports a fault; restarting all three first")
     bus.restart(IDS)
     found = bus.scan()
 check("status word 0 in normal operation", all(s.error == 0 for s in found.values()), str([hex(s.error) for s in found.values()]))
-check("bus voltage 0.5 V per count: 24.0-24.5 V on the 24 V supply", all(23.5 <= s.voltage <= 25.0 for s in found.values()),
-      str([s.voltage for s in found.values()]))
+check("bus voltage 0.5 V per count: 24.0-24.5 V on the 24 V supply", all(23.5 <= s.voltage() <= 25.0 for s in found.values()),
+      str([s.voltage() for s in found.values()]))
 check("coil temperature >= shell temperature", all(s.temp_coil >= s.temp_shell for s in found.values()),
       str([(s.temp_coil, s.temp_shell) for s in found.values()]))
 absent = [i for i in (0, 1, 2, 3, 7, 8) if bus.transfer(MotorCmd(id=i)) is not None]
@@ -252,14 +252,14 @@ for i in IDS:
             back, after = t, r
     j = rig.joints[i]
     shift = (after.pos - before.pos) if after else 0
-    k = round(shift / j.turn_counts)
-    okk = after is not None and after.mode == 0 and after.error == 0 and 0.2 < back < 0.45 and abs(shift - k * j.turn_counts) < 3000
+    k = round(shift / j.turn_counts())
+    okk = after is not None and after.mode == 0 and after.error == 0 and 0.2 < back < 0.45 and abs(shift - k * j.turn_counts()) < 3000
     check(f"mode 7 restarts id {i}: silent until about 300 ms, back in mode 0 with status 0", okk,
           f"answered until {last_reply * 1000:.0f} ms, back at {back * 1000:.0f} ms; position shift {shift:+d} = {k:+d} output turn(s) "
-          f"of {j.turn_counts:,}; coil/shell {after.temp_coil}/{after.temp_shell}" if after else "no reply after restart")
+          f"of {j.turn_counts():,}; coil/shell {after.temp_coil}/{after.temp_shell}" if after else "no reply after restart")
     if after:
         j.sync(after.pos)
-bus.close(brake=False)
+bus.close()
 
 # ---------------------------------------------------------------- 7. motion runs through sweep.py
 def sweep(name, *extra):

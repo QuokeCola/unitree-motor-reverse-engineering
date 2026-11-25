@@ -4,8 +4,8 @@
 @brief Doxygen input filter that turns a MATLAB file into C++-like text.
 
 Doxygen cannot read MATLAB. This filter keeps the `%>` comment lines as `///`
-comments and turns `classdef` and `function` lines into declarations that
-Doxygen understands; everything else is dropped.
+comments and turns `classdef`, `properties`, `methods` and `function` lines
+into declarations that Doxygen understands; everything else is dropped.
 
 Usage (from the Doxyfile): FILTER_PATTERNS = *.m="python3 this_file.py"
 """
@@ -14,6 +14,10 @@ import sys
 
 ## Matches a classdef line: class name and optional base classes.
 _CLASSDEF = re.compile(r"^\s*classdef\s+(\w+)(?:\s*<\s*([\w.&\s]+))?")
+## Matches the start of a properties or methods block and its attributes.
+_BLOCK = re.compile(r"^\s*(properties|methods)\b\s*(?:\(([^)]*)\))?\s*$")
+## Matches a property line: its name.
+_PROPERTY = re.compile(r"^\s*(\w+)\s*(?:=.*)?$")
 ## Matches a function line: outputs, name and parameters.
 _FUNCTION = re.compile(
     r"^\s*function\s+(?:\[?([\w,\s~]*)\]?\s*=\s*)?([\w.]+)\s*(?:\(([^)]*)\))?")
@@ -27,6 +31,8 @@ def convert(lines: list[str]) -> list[str]:
     """
     out = []
     class_name = None
+    in_properties = False
+    static = False
     for line in lines:
         stripped = line.strip()
         if stripped.startswith("%>"):
@@ -38,22 +44,39 @@ def convert(lines: list[str]) -> list[str]:
             base = (match.group(2) or "").strip()
             inherit = f" : public {base}" if base else ""
             out.append(f"class {class_name}{inherit} {{")
-            out.append("public:")
+            continue
+        match = _BLOCK.match(line) if class_name else None
+        if match:
+            kind, attributes = match.group(1), match.group(2) or ""
+            in_properties = kind == "properties"
+            static = "Static" in attributes
+            out.append("private:" if "private" in attributes else "public:")
+            continue
+        if in_properties:
+            if stripped == "end":
+                in_properties = False
+                out.append("")
+                continue
+            match = _PROPERTY.match(line)
+            out.append(f"var {match.group(1)};" if match and stripped else "")
             continue
         match = _FUNCTION.match(line)
         if match:
             returns, name, params = match.groups()
             names = [p.strip() for p in (params or "").split(",") if p.strip()]
-            if class_name:
-                names = names[1:] if names and name != class_name else names
+            is_constructor = class_name and name == class_name
+            if class_name and not static and not is_constructor:
+                names = names[1:]  # Drop the object argument.
             args = ", ".join(f"in {p}" for p in names if p != "~")
-            if class_name and name == class_name:
+            if is_constructor:
                 out.append(f"{name}({args});")
             elif class_name and name == "delete":
                 out.append(f"~{class_name}();")
             else:
                 result = (returns or "").strip() or "void"
-                out.append(f"{result.replace(',', ' ')} {name}({args});")
+                prefix = "static " if class_name and static else ""
+                out.append(f"{prefix}{result.replace(',', ' ')} "
+                           f"{name}({args});")
             continue
         out.append("")
     if class_name:

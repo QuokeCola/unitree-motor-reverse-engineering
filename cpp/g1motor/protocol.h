@@ -14,25 +14,20 @@
 namespace g1motor {
 
 /// Bus bit rate in baud (8N1).
-inline constexpr int kBaud = 6000000;
+inline constexpr int BAUD = 6000000;
 /// Length of a command frame in bytes.
-inline constexpr std::size_t kCmdLen = 20;
+inline constexpr std::size_t CMD_LEN = 20;
 /// Length of a reply frame in bytes.
-inline constexpr std::size_t kReplyLen = 26;
+inline constexpr std::size_t REPLY_LEN = 26;
 /// Id reserved as broadcast in the public GO-M8010-6 protocol; never polled.
-inline constexpr int kBroadcastId = 15;
+inline constexpr int BROADCAST_ID = 15;
 
-/// @brief Mode values carried in bits 4-6 of the id/mode byte.
-///
-/// Modes 3 and 5 are accepted and brake the joint; mode 4 is accepted and
-/// leaves it free; all three ignore the command fields. Mode 2 is ignored.
-/// Mode 6 sets the position zero with a calibration payload and is not sent
-/// by this library.
-enum Mode : int {
-  kIdle = 0,     ///< Commands ignored; joint passively braked.
-  kRun = 1,      ///< Hybrid torque / position / velocity command.
-  kRestart = 7,  ///< Motor restarts (about 0.3 s); clears a latched fault.
-};
+/// Mode 0: commands ignored; joint passively braked.
+inline constexpr int MODE_IDLE = 0;
+/// Mode 1: hybrid torque / position / velocity command.
+inline constexpr int MODE_RUN = 1;
+/// Mode 7: motor restarts (about 0.3 s); clears a latched fault.
+inline constexpr int MODE_RESTART = 7;
 
 /// @brief Checksum of the bus: CRC-32 over little-endian 32-bit words.
 ///
@@ -42,7 +37,7 @@ enum Mode : int {
 /// @param len Number of bytes; must be a multiple of 4.
 /// @return The checksum.
 /// @throws std::invalid_argument if len is not a multiple of 4.
-std::uint32_t Crc32Core(const std::uint8_t* data, std::size_t len);
+std::uint32_t crc32_core(const std::uint8_t* data, std::size_t len);
 
 /// @brief One command frame (controller to motor).
 ///
@@ -50,7 +45,7 @@ std::uint32_t Crc32Core(const std::uint8_t* data, std::size_t len);
 /// `tau + kp * (pos - measured) + kd * (vel - measured)`.
 struct MotorCmd {
   int id = 0;              ///< Motor id, 0-14.
-  int mode = kIdle;        ///< See Mode.
+  int mode = MODE_IDLE;    ///< MODE_IDLE, MODE_RUN or MODE_RESTART.
   int tau = 0;             ///< Feed-forward torque, int16.
   int vel = 0;             ///< Velocity target, int16.
   std::int32_t pos = 0;    ///< Position target, int32.
@@ -60,12 +55,15 @@ struct MotorCmd {
   std::uint8_t byte3 = 0;  ///< Sequence byte; not required.
 
   /// @brief Builds the 20-byte frame, checksum included.
+  /// @return The frame.
   /// @throws std::out_of_range if the id or a field does not fit.
-  std::array<std::uint8_t, kCmdLen> Encode() const;
+  std::array<std::uint8_t, CMD_LEN> encode() const;
 
   /// @brief Parses a command frame.
+  /// @param frame Exactly 20 bytes.
+  /// @param len Number of bytes in frame.
   /// @return The command, or empty if the header or checksum is wrong.
-  static std::optional<MotorCmd> Decode(const std::uint8_t* frame,
+  static std::optional<MotorCmd> decode(const std::uint8_t* frame,
                                         std::size_t len);
 };
 
@@ -84,23 +82,30 @@ struct MotorState {
   int byte20 = 0;           ///< Unknown.
   int byte21 = 0;           ///< Unknown.
 
-  /// @return Bus voltage in volts.
+  /// @brief Bus voltage.
+  /// @return Volts.
   double voltage() const { return voltage_raw * 0.5; }
+
+  /// @brief Whether the motor reports a fault.
   /// @return True if the status word is non-zero.
   bool fault() const { return error != 0; }
 
   /// @brief Parses a reply frame.
+  /// @param frame Exactly 26 bytes.
+  /// @param len Number of bytes in frame.
   /// @return The state, or empty if the header or checksum is wrong.
-  static std::optional<MotorState> Decode(const std::uint8_t* frame,
+  static std::optional<MotorState> decode(const std::uint8_t* frame,
                                           std::size_t len);
 };
 
 /// @brief Finds the first valid reply in a receive buffer.
 ///
 /// Skips echoed command bytes and noise.
+/// @param buffer Bytes received so far.
+/// @param len Number of bytes in buffer.
 /// @return The reply, or empty if none is complete and valid.
-std::optional<MotorState> FindReply(const std::uint8_t* buffer,
-                                    std::size_t len);
+std::optional<MotorState> find_reply(const std::uint8_t* buffer,
+                                     std::size_t len);
 
 }  // namespace g1motor
 

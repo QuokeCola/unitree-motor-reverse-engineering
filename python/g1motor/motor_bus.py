@@ -7,9 +7,9 @@ from __future__ import annotations
 import time
 from collections.abc import Iterable
 
-from g1_joint_motor_sdk import joint as joint_lib
-from g1_joint_motor_sdk import protocol
-from g1_joint_motor_sdk import serial_port
+from g1motor import joint as joint_lib
+from g1motor import protocol
+from g1motor import serial_port
 
 
 class BusBusyError(RuntimeError):
@@ -31,7 +31,7 @@ class MotorBus:
     @code{.py}
     with MotorBus() as bus:
         start = bus.enable([4, 5, 6])          # run mode, joints free
-        bus.command(4, pos=start[4].pos, kp=300, kd=40)   # in a steady loop
+        bus.command(4, start[4].pos, 0, 0, 300, 40)   # in a steady loop
     @endcode
 
     Motors answer only when polled, so every command returns that motor's
@@ -39,28 +39,30 @@ class MotorBus:
     0.5-1 s. Leaving the `with` block returns enabled motors to idle.
     """
 
-    def __init__(self, port: str | None = None, reply_timeout: float = 0.004,
+    def __init__(self, port: str = "", reply_timeout: float = 0.004,
                  check_silent: bool = True):
         """!
         @brief Opens the adapter at 6 Mbaud.
-        @param port Device name; None selects the only FTDI adapter.
+        @param port Device name; empty selects the only FTDI adapter.
         @param reply_timeout Longest wait for a reply, in seconds.
         @param check_silent Listen first and refuse a bus that has traffic.
         @exception BusBusyError The bus is not silent.
         @exception RuntimeError The port cannot be opened.
         """
-        ## The open pyserial port.
-        self._serial = serial_port.open_port(port)
+        ## The open serial port.
+        self._port = serial_port.SerialPort()
         ## Longest wait for a reply, in seconds.
         self._reply_timeout = reply_timeout
-        ## Frames sent per motor, for the sequence byte.
+        ## Motors enabled here.
+        self._enabled: set[int] = set()
+        ## Joints attached, by id.
+        self._joints: dict[int, joint_lib.Joint] = {}
+        ## Frames sent per motor.
         self._frame_count: dict[int, int] = {}
-        ## Ids of the motors enabled through this object.
-        self.enabled: set[int] = set()
-        ## Joints attached with set_joint(), by motor id.
-        self.joints: dict[int, joint_lib.Joint] = {}
+        self._port.open(port or serial_port.SerialPort.find_port(),
+                        protocol.BAUD)
         if check_silent and self.listen(0.3):
-            self._serial.close()
+            self._port.close()
             raise BusBusyError("bus is not silent: a controller is already "
                                "polling the motors")
 
@@ -81,13 +83,13 @@ class MotorBus:
         """!
         @brief Returns enabled motors to idle and closes the port.
         """
-        if not self._serial.is_open:
+        if not self._port.is_open():
             return
         try:
-            if self.enabled:
+            if self._enabled:
                 self.disable()
         finally:
-            self._serial.close()
+            self._port.close()
 
     def listen(self, seconds: float) -> bytes:
         """!
@@ -98,7 +100,7 @@ class MotorBus:
         end = time.monotonic() + seconds
         received = b""
         while time.monotonic() < end:
-            received += self._serial.read(4096)
+            received += self._port.read(4096, 0.001)
         return received
 
     def transfer(self, cmd: protocol.MotorCmd) -> protocol.MotorState | None:
@@ -107,29 +109,29 @@ class MotorBus:
         @param cmd Command to send.
         @return The reply, or None on timeout or a bad checksum.
         """
-        self._serial.reset_input_buffer()
-        self._serial.write(cmd.encode())
+        self._port.flush_input()
+        self._port.write(cmd.encode())
         end = time.monotonic() + self._reply_timeout
         received = b""
-        while time.monotonic() < end:
-            received += self._serial.read(256)
+        while True:
+            left = end - time.monotonic()
+            if left <= 0:
+                return None
+            received += self._port.read(256, left)
             if len(received) < protocol.REPLY_LEN:
                 continue
             state = protocol.find_reply(received)
             if state:
                 return state if state.id == cmd.id else None
-        return None
 
-    def scan(self, ids: Iterable[int] = range(protocol.BROADCAST_ID),
-             tries: int = 3) -> dict[int, protocol.MotorState]:
+    def scan(self, tries: int = 3) -> dict[int, protocol.MotorState]:
         """!
-        @brief Polls ids with the idle frame.
-        @param ids Ids to poll; all of 0-14 by default.
+        @brief Polls ids 0-14 with the idle frame.
         @param tries Attempts per id.
         @return The motors that answered, by id.
         """
         found = {}
-        for motor_id in ids:
+        for motor_id in range(protocol.BROADCAST_ID):
             for _ in range(tries):
                 state = self.transfer(protocol.MotorCmd(id=motor_id))
                 if state:
@@ -137,19 +139,19 @@ class MotorBus:
                     break
         return found
 
-    def read(self, motor_id: int) -> protocol.MotorState | None:
+    def read(self, id: int) -> protocol.MotorState | None:
         """!
         @brief Reads a motor's state.
 
         On an enabled motor this sends a zero-torque command, which drops a
         position hold.
 
-        @param motor_id Motor to read.
+        @param id Motor to read.
         @return The state, or None if it did not reply.
         """
-        if motor_id in self.enabled:
-            return self.command(motor_id)
-        return self.transfer(protocol.MotorCmd(id=motor_id))
+        if self.is_enabled(id):
+            return self.command(id)
+        return self.transfer(protocol.MotorCmd(id=id))
 
     def enable(self, ids: Iterable[int]) -> dict[int, protocol.MotorState]:
         """!
@@ -184,28 +186,28 @@ class MotorBus:
                 raise MotorFaultError(
                     f"motor {motor_id} did not enter run mode (status "
                     f"0x{state.error:08x}); restart() clears a latched fault")
-        self.enabled.update(ids)
+        self._enabled.update(ids)
         for motor_id in ids:
-            if motor_id not in self.joints:
+            if motor_id not in self._joints:
                 continue
             try:
-                self.joints[motor_id].sync(last[motor_id].pos)
+                self._joints[motor_id].sync(last[motor_id].pos)
             except ValueError as error:
                 self.disable(ids)
                 raise MotorFaultError(f"motor {motor_id}: {error}") from None
         return last
 
-    def disable(self, ids: Iterable[int] | None = None) -> None:
+    def disable(self, ids: Iterable[int] = ()) -> None:
         """!
         @brief Returns motors to idle, which brakes the joint passively.
 
         This is also the way to stop a moving joint.
 
-        @param ids Motors to idle; None means every enabled motor.
+        @param ids Motors to idle; empty means every enabled motor.
         """
-        ids = list(self.enabled if ids is None else ids)
+        ids = list(ids) or list(self._enabled)
         self._send_idle(ids, 20)
-        self.enabled.difference_update(ids)
+        self._enabled.difference_update(ids)
 
     def restart(self, ids: Iterable[int],
                 wait: float = 0.5) -> dict[int, protocol.MotorState]:
@@ -224,7 +226,7 @@ class MotorBus:
         for motor_id in ids:
             self.transfer(protocol.MotorCmd(id=motor_id,
                                             mode=protocol.MODE_RESTART))
-        self.enabled.difference_update(ids)
+        self._enabled.difference_update(ids)
         time.sleep(wait)
         after = {}
         for motor_id in ids:
@@ -234,22 +236,22 @@ class MotorBus:
                     after[motor_id] = state
                     break
         for motor_id, state in after.items():
-            if motor_id not in self.joints:
+            if motor_id not in self._joints:
                 continue
             try:
-                self.joints[motor_id].sync(state.pos)
+                self._joints[motor_id].sync(state.pos)
             except ValueError as error:
                 raise MotorFaultError(f"motor {motor_id}: {error}") from None
         return after
 
-    def command(self, motor_id: int, pos: int = 0, vel: int = 0, tau: int = 0,
+    def command(self, id: int, pos: int = 0, vel: int = 0, tau: int = 0,
                 kp: int = 0, kd: int = 0) -> protocol.MotorState | None:
         """!
         @brief Sends one hybrid command, in raw counts, to an enabled motor.
 
         Position targets are limited to the end stops of an attached joint.
 
-        @param motor_id Motor to command.
+        @param id Motor to command.
         @param pos Position target.
         @param vel Velocity target.
         @param tau Feed-forward torque.
@@ -258,33 +260,50 @@ class MotorBus:
         @return The motor's state, or None if it did not reply.
         @exception RuntimeError The motor is not enabled.
         """
-        if motor_id not in self.enabled:
-            raise RuntimeError(f"motor {motor_id} is not enabled; call "
-                               "enable() first")
-        if kp and motor_id in self.joints:
-            pos = self.joints[motor_id].clamp(pos)
+        if not self.is_enabled(id):
+            raise RuntimeError(f"motor {id} is not enabled; call enable() "
+                               "first")
+        if kp and id in self._joints:
+            pos = self._joints[id].clamp(pos)
         return self.transfer(protocol.MotorCmd(
-            id=motor_id, mode=protocol.MODE_RUN, flag=True,
-            byte3=self._next_byte3(motor_id, True), pos=pos, vel=vel, tau=tau,
+            id=id, mode=protocol.MODE_RUN, flag=True,
+            byte3=self._next_byte3(id, True), pos=pos, vel=vel, tau=tau,
             kp=kp, kd=kd))
 
-    def set_joint(self, motor_id: int, joint: joint_lib.Joint) -> None:
+    def set_joint(self, id: int, joint: joint_lib.Joint) -> None:
         """!
         @brief Attaches a joint description to a motor.
-        @param motor_id Motor the joint belongs to.
+        @param id Motor the joint belongs to.
         @param joint Gear ratio, end stops and zero.
         """
-        self.joints[motor_id] = joint
+        self._joints[id] = joint
 
-    def _next_byte3(self, motor_id: int, flag: bool) -> int:
+    def joint(self, id: int) -> joint_lib.Joint:
+        """!
+        @brief The joint attached to a motor.
+        @param id Motor id.
+        @return The joint, as re-referenced by enable() and restart().
+        @exception KeyError None is attached.
+        """
+        return self._joints[id]
+
+    def is_enabled(self, id: int) -> bool:
+        """!
+        @brief Whether a motor was enabled through this object.
+        @param id Motor id.
+        @return True if it is enabled.
+        """
+        return id in self._enabled
+
+    def _next_byte3(self, id: int, flag: bool) -> int:
         """!
         @brief Sequence byte as the G1 controller sends it.
-        @param motor_id Motor the frame is for.
+        @param id Motor the frame is for.
         @param flag Whether the flag bit is set in this frame.
         @return 0 without the flag, else 0x80 / 0x90 changing every 8 frames.
         """
-        count = self._frame_count.get(motor_id, 0)
-        self._frame_count[motor_id] = count + 1
+        count = self._frame_count.get(id, 0)
+        self._frame_count[id] = count + 1
         if not flag:
             return 0
         return 0x80 if (count // 8) % 2 == 0 else 0x90

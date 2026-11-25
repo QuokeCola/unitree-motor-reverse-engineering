@@ -453,17 +453,17 @@ for the output shaft.</p>
 </ul></div>
 
 <div class="keep"><h1>Software</h1>
-<p>Drivers implementing this guide accompany it in Python, C++ and MATLAB, with the same calls in each. The Python one:</p>
-<pre>from g1_joint_motor_sdk import MotorBus, Joint
+<p>Drivers implementing this guide accompany it in Python, C++ and MATLAB (<code>g1motor</code>), with the same names in each. In Python:</p>
+<pre>from g1motor import MotorBus, Joint
 
 with MotorBus() as bus:                    # 6 Mbaud; refuses a busy bus
     print(bus.scan())                      # {4: MotorState(...), ...}
     bus.restart([4])                       # mode 7: clears a latched fault
     bus.set_joint(4, Joint(16, low, high)) # gear ratio, end stops in counts
     bus.enable([4])                        # run mode, zero torque
-    target = bus.joints[4].counts(0.5)     # 0.5 rad from zero, at the output
+    target = bus.joint(4).counts(0.5)      # 0.5 rad from zero, at the output
     for _ in range(1000):
-        state = bus.command(4, pos=target, kp=300, kd=40)
+        state = bus.command(4, target, 0, 0, 300, 40)
 # on exit: back to idle, which brakes the joint</pre></div>
 
 <h1>Revision History</h1>

@@ -54,7 +54,6 @@ class Joint:
             else:
                 self.zero = round((self.low + self.high) / 2)
 
-    @property
     def turn_counts(self) -> int:
         """!
         @brief Size of one output turn.
@@ -62,7 +61,6 @@ class Joint:
         """
         return round(self.gear_ratio * COUNTS_PER_ROTOR_TURN)
 
-    @property
     def travel(self) -> float | None:
         """!
         @brief Angle between the end stops.
@@ -70,7 +68,7 @@ class Joint:
         """
         if self.low is None:
             return None
-        return (self.high - self.low) / self.turn_counts * 2 * math.pi
+        return (self.high - self.low) / self.turn_counts() * 2 * math.pi
 
     def sync(self, pos: int) -> int:
         """!
@@ -87,8 +85,8 @@ class Joint:
             reference = self.zero
         else:
             reference = (self.low + self.high) / 2
-        turns = round((pos - reference) / self.turn_counts)
-        shift = turns * self.turn_counts
+        turns = round((pos - reference) / self.turn_counts())
+        shift = turns * self.turn_counts()
         self.zero += shift
         if self.low is not None:
             self.low += shift
@@ -105,7 +103,7 @@ class Joint:
         @param pos Position in counts.
         @return Angle in rad from the zero.
         """
-        return (pos - self.zero) / self.turn_counts * 2 * math.pi
+        return (pos - self.zero) / self.turn_counts() * 2 * math.pi
 
     def counts(self, angle: float) -> int:
         """!
@@ -114,7 +112,7 @@ class Joint:
         @return Position in counts.
         """
         turns = angle / (2 * math.pi)
-        return round(self.zero + self.turn_counts * turns)
+        return round(self.zero + self.turn_counts() * turns)
 
     def speed(self, vel: float) -> float:
         """!
@@ -122,7 +120,7 @@ class Joint:
         @param vel Velocity in counts.
         @return Speed in rad/s.
         """
-        return (vel * POS_COUNTS_PER_VEL_COUNT / self.turn_counts
+        return (vel * POS_COUNTS_PER_VEL_COUNT / self.turn_counts()
                 * 2 * math.pi)
 
     def clamp(self, pos: float) -> int:

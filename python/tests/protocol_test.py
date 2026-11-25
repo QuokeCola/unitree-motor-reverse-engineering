@@ -7,7 +7,7 @@ import sys
 
 import pytest
 
-import g1_joint_motor_sdk as sdk
+import g1motor
 
 ## Run mode, zero torque, id 0 (robot).
 CMD_ZERO_TORQUE = bytes.fromhex("feee90800000000000000000000000009b1e4106")
@@ -34,9 +34,9 @@ def test_checksum():
     """!
     @brief Checksums of a captured command and reply.
     """
-    assert (sdk.crc32_core(CMD_ZERO_TORQUE[:16]).to_bytes(4, "little")
+    assert (g1motor.crc32_core(CMD_ZERO_TORQUE[:16]).to_bytes(4, "little")
             == CMD_ZERO_TORQUE[16:])
-    assert (sdk.crc32_core(REPLY_ROBOT[2:22]).to_bytes(4, "little")
+    assert (g1motor.crc32_core(REPLY_ROBOT[2:22]).to_bytes(4, "little")
             == REPLY_ROBOT[22:])
 
 
@@ -44,44 +44,44 @@ def test_encode_matches_capture():
     """!
     @brief Encoded commands equal the captured frames.
     """
-    run = dict(id=0, mode=sdk.MODE_RUN, flag=True, byte3=0x80)
-    assert sdk.MotorCmd(id=0).encode() == CMD_IDLE
-    assert sdk.MotorCmd(**run).encode() == CMD_ZERO_TORQUE
-    assert sdk.MotorCmd(**run, kd=25).encode() == CMD_DAMPING
-    assert sdk.MotorCmd(**run, pos=25032, kp=450, kd=10).encode() == CMD_HOLD
-    assert sdk.MotorCmd(id=0, mode=sdk.MODE_RESTART).encode() == CMD_RESTART
+    run = dict(id=0, mode=g1motor.MODE_RUN, flag=True, byte3=0x80)
+    assert g1motor.MotorCmd(id=0).encode() == CMD_IDLE
+    assert g1motor.MotorCmd(**run).encode() == CMD_ZERO_TORQUE
+    assert g1motor.MotorCmd(**run, kd=25).encode() == CMD_DAMPING
+    assert g1motor.MotorCmd(**run, pos=25032, kp=450, kd=10).encode() == CMD_HOLD
+    assert g1motor.MotorCmd(id=0, mode=g1motor.MODE_RESTART).encode() == CMD_RESTART
 
 
 def test_command_round_trip():
     """!
     @brief A command survives encode and decode.
     """
-    cmd = sdk.MotorCmd(id=6, mode=sdk.MODE_RUN, flag=True, byte3=0x90,
+    cmd = g1motor.MotorCmd(id=6, mode=g1motor.MODE_RUN, flag=True, byte3=0x90,
                        tau=-12, vel=345, pos=-123456, kp=300, kd=80)
-    assert sdk.MotorCmd.decode(cmd.encode()) == cmd
+    assert g1motor.MotorCmd.decode(cmd.encode()) == cmd
 
 
 def test_decode_reply():
     """!
     @brief Fields of captured robot and bench replies.
     """
-    state = sdk.MotorState.decode(REPLY_ROBOT)
+    state = g1motor.MotorState.decode(REPLY_ROBOT)
     assert (state.id, state.mode, state.pos) == (2, 1, -180794)
     assert (state.vel, state.tau) == (-8, -1)
-    assert (state.temp_coil, state.temp_shell, state.voltage) == (36, 35, 48.5)
-    assert not state.fault
-    bench = sdk.MotorState.decode(REPLY_BENCH)
-    assert (bench.id, bench.mode, bench.pos) == (4, sdk.MODE_IDLE, 67611)
-    assert bench.voltage == 24.0
+    assert (state.temp_coil, state.temp_shell, state.voltage()) == (36, 35, 48.5)
+    assert not state.fault()
+    bench = g1motor.MotorState.decode(REPLY_BENCH)
+    assert (bench.id, bench.mode, bench.pos) == (4, g1motor.MODE_IDLE, 67611)
+    assert bench.voltage() == 24.0
 
 
 def test_fault_word():
     """!
     @brief A captured reply with status 0x8 reports a fault.
     """
-    state = sdk.MotorState.decode(REPLY_FAULT)
-    assert state.fault and state.error == 0x8
-    assert state.mode == sdk.MODE_IDLE
+    state = g1motor.MotorState.decode(REPLY_FAULT)
+    assert state.fault() and state.error == 0x8
+    assert state.mode == g1motor.MODE_IDLE
 
 
 def test_bad_frames_rejected():
@@ -90,17 +90,17 @@ def test_bad_frames_rejected():
     """
     broken = bytearray(REPLY_ROBOT)
     broken[10] ^= 1
-    assert sdk.MotorState.decode(bytes(broken)) is None
-    assert sdk.MotorState.decode(REPLY_ROBOT[:-1]) is None
-    assert sdk.MotorCmd.decode(CMD_IDLE[:-1] + b"\x00") is None
+    assert g1motor.MotorState.decode(bytes(broken)) is None
+    assert g1motor.MotorState.decode(REPLY_ROBOT[:-1]) is None
+    assert g1motor.MotorCmd.decode(CMD_IDLE[:-1] + b"\x00") is None
 
 
 def test_find_reply_skips_echo_and_noise():
     """!
     @brief A reply is found after echo and noise.
     """
-    assert sdk.find_reply(CMD_IDLE + b"\xfc\xee\x00" + REPLY_BENCH).id == 4
-    assert sdk.find_reply(CMD_IDLE) is None
+    assert g1motor.find_reply(CMD_IDLE + b"\xfc\xee\x00" + REPLY_BENCH).id == 4
+    assert g1motor.find_reply(CMD_IDLE) is None
 
 
 def test_field_range_checked():
@@ -108,9 +108,9 @@ def test_field_range_checked():
     @brief Out-of-range fields and ids raise ValueError.
     """
     with pytest.raises(ValueError):
-        sdk.MotorCmd(id=4, kp=40000).encode()
+        g1motor.MotorCmd(id=4, kp=40000).encode()
     with pytest.raises(ValueError):
-        sdk.MotorCmd(id=15).encode()
+        g1motor.MotorCmd(id=15).encode()
 
 
 if __name__ == "__main__":

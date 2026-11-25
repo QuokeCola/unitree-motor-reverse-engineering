@@ -12,11 +12,11 @@
 
 namespace g1motor {
 
-SerialPort::~SerialPort() { Close(); }
+SerialPort::~SerialPort() { close(); }
 bool SerialPort::is_open() const { return handle_ != nullptr; }
 
-void SerialPort::Open(const std::string& port, int baud) {
-  Close();
+void SerialPort::open(const std::string& port, int baud) {
+  close();
   const std::string path =
       (port.rfind("\\\\.\\", 0) == 0)
           ? port
@@ -47,19 +47,19 @@ void SerialPort::Open(const std::string& port, int baud) {
                              " baud on " + port);
   }
   handle_ = h;
-  FlushInput();
+  flush_input();
   // The FTDI latency timer (default 16 ms) is set in Device Manager: port,
   // Advanced, Latency Timer = 1.
 }
 
-void SerialPort::Close() {
+void SerialPort::close() {
   if (handle_) {
     CloseHandle(static_cast<HANDLE>(handle_));
     handle_ = nullptr;
   }
 }
 
-void SerialPort::Write(const std::uint8_t* data, std::size_t len) {
+void SerialPort::write(const std::uint8_t* data, std::size_t len) {
   DWORD done = 0;
   if (!WriteFile(static_cast<HANDLE>(handle_), data, static_cast<DWORD>(len),
                  &done, nullptr) ||
@@ -67,7 +67,7 @@ void SerialPort::Write(const std::uint8_t* data, std::size_t len) {
     throw std::runtime_error("serial write failed");
 }
 
-std::size_t SerialPort::Read(std::uint8_t* data, std::size_t max_len,
+std::size_t SerialPort::read(std::uint8_t* data, std::size_t max_len,
                              int timeout_us) {
   COMMTIMEOUTS t{};
   t.ReadIntervalTimeout = MAXDWORD;  // return as soon as any byte is there,
@@ -83,11 +83,11 @@ std::size_t SerialPort::Read(std::uint8_t* data, std::size_t max_len,
   return got;
 }
 
-void SerialPort::FlushInput() {
+void SerialPort::flush_input() {
   PurgeComm(static_cast<HANDLE>(handle_), PURGE_RXCLEAR);
 }
 
-std::string SerialPort::FindPort() {
+std::string SerialPort::find_port() {
   throw std::runtime_error("give the port name, for example COM5");
 }
 
@@ -117,11 +117,11 @@ std::string SerialPort::FindPort() {
 
 namespace g1motor {
 
-SerialPort::~SerialPort() { Close(); }
+SerialPort::~SerialPort() { close(); }
 bool SerialPort::is_open() const { return fd_ >= 0; }
 
-void SerialPort::Open(const std::string& port, int baud) {
-  Close();
+void SerialPort::open(const std::string& port, int baud) {
+  close();
   const int fd = ::open(port.c_str(), O_RDWR | O_NOCTTY | O_NONBLOCK);
   if (fd < 0)
     throw std::runtime_error("cannot open " + port + ": " +
@@ -175,17 +175,17 @@ void SerialPort::Open(const std::string& port, int baud) {
 #endif
   fd_ = fd;
   usleep(100000);  // let bytes received before the rate change drain
-  FlushInput();
+  flush_input();
 }
 
-void SerialPort::Close() {
+void SerialPort::close() {
   if (fd_ >= 0) {
     ::close(fd_);
     fd_ = -1;
   }
 }
 
-void SerialPort::Write(const std::uint8_t* data, std::size_t len) {
+void SerialPort::write(const std::uint8_t* data, std::size_t len) {
   std::size_t done = 0;
   while (done < len) {
     const ssize_t n = ::write(fd_, data + done, len - done);
@@ -203,7 +203,7 @@ void SerialPort::Write(const std::uint8_t* data, std::size_t len) {
   }
 }
 
-std::size_t SerialPort::Read(std::uint8_t* data, std::size_t max_len,
+std::size_t SerialPort::read(std::uint8_t* data, std::size_t max_len,
                              int timeout_us) {
   struct pollfd p{fd_, POLLIN, 0};
   struct timespec ts{timeout_us / 1000000, (timeout_us % 1000000) * 1000L};
@@ -218,7 +218,7 @@ std::size_t SerialPort::Read(std::uint8_t* data, std::size_t max_len,
   return n > 0 ? static_cast<std::size_t>(n) : 0;
 }
 
-void SerialPort::FlushInput() {
+void SerialPort::flush_input() {
 #if defined(__linux__)
   ioctl(fd_, TCFLSH, TCIFLUSH);
 #else
@@ -226,7 +226,7 @@ void SerialPort::FlushInput() {
 #endif
 }
 
-std::string SerialPort::FindPort() {
+std::string SerialPort::find_port() {
 #if defined(__linux__)
   glob_t g{};
   std::vector<std::string> found;

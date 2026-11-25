@@ -8,5 +8,6 @@
 #include "g1motor/motor_bus.h"
 #include "g1motor/protocol.h"
 #include "g1motor/serial_port.h"
+#include "g1motor/units.h"
 
 #endif  // G1MOTOR_G1MOTOR_H_

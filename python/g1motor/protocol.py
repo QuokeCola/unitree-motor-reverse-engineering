@@ -169,7 +169,6 @@ class MotorState:
     ## The frame as received.
     raw: bytes = b""
 
-    @property
     def voltage(self) -> float:
         """!
         @brief Bus voltage.
@@ -177,7 +176,6 @@ class MotorState:
         """
         return self.voltage_raw * 0.5
 
-    @property
     def fault(self) -> bool:
         """!
         @brief Whether the motor reports a fault.
