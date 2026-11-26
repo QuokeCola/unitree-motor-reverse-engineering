@@ -7,6 +7,24 @@ captures and bench tests; not affiliated with or supported by Unitree.
 Use the drivers on a bare arm or motor with no robot controller on the bus. On a complete robot
 the onboard controller is the bus master; the drivers refuse to open a bus that has traffic.
 
+## Start here
+
+1. Read [Wiring](#wiring) and [Serial port](#serial-port) before connecting hardware.
+   These drivers are for a bare arm or motor with the robot controller disconnected.
+2. Install one interface: [Python](python/README.md), [C++](cpp/README.md), or
+   [MATLAB](matlab/README.md). Each guide gives build, scan, and test commands.
+3. Scan the isolated bus to find its motor IDs. A scan sends idle frames; it is
+   **not passive monitoring** and can interrupt an existing hold.
+4. Try zero torque before a position hold. Enabling a motor frees the joint;
+   support any load before enabling it. The examples use gains tested on a
+   24 V bench wrist, not gains validated for every G1 joint.
+
+For packet layouts and reverse-engineering results, read the
+[English protocol guide](docs/G1_Joint_Motor_Protocol_Guide.pdf) or
+[Chinese protocol guide](docs/G1_Joint_Motor_Protocol_Guide_zh.pdf).
+The [lab notes](docs/lab_notes.md) preserve the experiments in order; early
+hypotheses may be superseded by later measurements.
+
 ## Layout
 
 | Folder | Contents |
@@ -64,8 +82,10 @@ the bus runs at about 48 V. On 24 V:
 - The motors top out at about 1,275,000 position counts/s (about 39 rotor turns/s), whatever is
   commanded.
 - Braking hard from top speed can pull the supply down to about 15 V and latch the
-  under-voltage fault (status `0x8`). Only a power cycle clears it. Stop by going to idle
-  (`disable()`), which does not cause the fault. Details in `docs/lab_notes.md`.
+  under-voltage fault (status `0x8`). Later bench tests cleared it with mode 7
+  (`restart()`); a power cycle also cleared it. Stop by going to idle (`disable()`),
+  which does not cause the fault. See the
+  [bench results](docs/lab_notes.md#stopping-from-top-speed-three-ways-compared-2026-11-25).
 
 Keep the robot's own controller off the bus. Power on the motors only after you have checked the
 wiring, and keep the joint clear of anything it could hit.
@@ -84,7 +104,18 @@ wiring, and keep the joint clear of anything it could hit.
 | Checksum | `g1motor.crc32_core(data)` | `g1motor::crc32_core(data, len)` | `g1motor.crc32_core(data)` |
 | Constant | `g1motor.BAUD` | `g1motor::BAUD` | `g1motor.BAUD` |
 
-Values are raw counts. The full list of names is in each folder's README.
+`command(id, pos, vel, tau, kp, kd)` takes raw protocol values, not degrees,
+radians, or N·m. `pos` is a rotor position target, `vel` a rotor velocity target,
+`tau` feed-forward torque, and `kp` / `kd` the position / damping gains.
+`units` converts rotor values; an attached `Joint` converts output-shaft angles
+using its gear ratio and software zero. The torque conversion scale is assumed,
+not measured. See each language guide for the full API.
+
+`enable()` enters run mode with zero torque; `disable()` enters idle with passive
+braking. Neither is a position hold. Poll **every enabled motor** in the command
+loop; after about 0.5–1 s without polling, a motor drops to idle. `read()` also
+sends a command: on an enabled motor it replaces the hold with zero torque.
+Use the state returned by `command()` when maintaining a hold.
 
 ## Naming
 
@@ -95,6 +126,9 @@ its class). This is the Google Python style. C++ follows the Google C++ guide in
 names follow the common rule instead, so that the three interfaces read the same.
 
 ## Tests
+
+Build or install the selected interface first, following its linked guide.
+Run the commands below from the repository root, except for the MATLAB functions.
 
 Each language has two tests that need no hardware and one that needs motors on a bus without a
 controller (it holds the joints in place for 2 s and restarts one motor).
@@ -107,7 +141,9 @@ controller (it holds the joints in place for 2 s and restarts one motor).
 
 ## Documentation
 
-- **Protocol:** `docs/G1_Joint_Motor_Protocol_Guide.pdf`. Rebuild with `docs/manual/build.sh`.
+- **Protocol:** `docs/G1_Joint_Motor_Protocol_Guide.pdf`. Rebuild with `sh docs/manual/build.sh` (Python 3, `google-chrome-stable`, and
+  Poppler’s `pdfinfo` must be on `PATH`). The English source is
+  [manual.html](docs/manual/manual.html); `make_zh.py` generates the Chinese HTML.
 - **API reference:** every class and function carries Doxygen comments. Build it with
   `doxygen docs/Doxyfile` from the top of the repository; open `docs/api/html/index.html`.
   MATLAB files are read through `docs/doxygen_matlab_filter.py`.
