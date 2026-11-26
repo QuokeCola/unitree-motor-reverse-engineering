@@ -62,7 +62,7 @@
   <div class="brand">G1 Joint Motor</div>
   <div class="title">RS-485 Communication Protocol</div>
   <div class="kind">Unofficial User Guide</div>
-  <div class="ver"><span>V0.7</span>2026.11</div>
+  <div class="ver"><span>V0.8</span>2026.11</div>
   <table class="key">
     <thead><tr><th class="l" colspan="2">RS-485 key parameters</th></tr>
     </thead>
@@ -70,9 +70,9 @@
     <tr><td>Character format</td><td>8 data bits, no parity, 1 stop bit (8N1)</td></tr>
     <tr><td>Flow control</td><td>None</td></tr>
     <tr><td>Duplex</td><td>Half duplex, two-wire</td></tr>
-    <tr><td>Bus access</td><td>Single master; a motor transmits only in reply to its own ID</td></tr>
+    <tr><td>Bus access</td><td>One controller; a motor replies only to commands sent to its ID</td></tr>
     <tr><td>Motor IDs</td><td>0-14</td></tr>
-    <tr><td>Byte order</td><td>Little-endian</td></tr>
+    <tr><td>Byte order</td><td>Lowest-value byte first (little-endian)</td></tr>
     <tr><td>Command frame</td><td>20 bytes, header 0xFE 0xEE</td></tr>
     <tr><td>Reply frame</td><td>26 bytes, header 0xFC 0xEE</td></tr>
     <tr><td>Checksum</td><td>CRC-32, polynomial 0x04C11DB7, initial value 0xFFFFFFFF</td></tr>
@@ -110,27 +110,28 @@
     </svg>
   </div>
   <div class="foot">
-    <b>Reverse-engineered documentation.</b> Written from bus captures and bench tests on 2026-11-25.<br>
+    <b>Reverse-engineered documentation.</b> Tests and recordings: 2026-11-25.<br>
     Not produced, reviewed or endorsed by Unitree Robotics. Unitree and G1 are names of their respective owner.
   </div>
 </section>
 
 <h1>Notice</h1>
-<p>This guide describes the serial protocol spoken by the joint motors of a Unitree G1 humanoid arm, as observed on the wire.
-It was written without access to any manufacturer documentation for these motors. Every statement is marked by how it was
-established: <span class="tag">verified</span> means it was checked against captured traffic or reproduced on a motor,
-<span class="tag">inferred</span> means it fits the data but was not tested directly, and <span class="tag">assumed</span> means it is
-carried over from Unitree's public GO-M8010-6 motor protocol and not checked on these motors.</p>
+<p>This guide explains how to communicate with Unitree G1 arm joint motors over RS-485. It is based on recorded messages and motor tests, without access to the manufacturer's documentation for these G1 motors. Labels show the evidence behind a finding:</p>
+<ul>
+  <li><span class="tag">verified</span> Checked against recorded messages or tested on a motor.</li>
+  <li><span class="tag">inferred</span> Suggested by the data, but not tested directly.</li>
+  <li><span class="tag">assumed</span> Taken from Unitree's public GO-M8010-6 protocol and not yet checked on G1 motors.</li>
+</ul>
 <p>The manufacturer may change the protocol in other hardware or firmware versions. Use at your own risk.</p>
 
 <h1>Getting Started</h1>
 <p>To use a driver, read the repository README, then follow the installation steps in the Python, C++ or MATLAB folder. Check the wiring, scan for motor IDs, and try zero torque before a position hold. Scanning sends idle commands; it is not passive monitoring and can interrupt a hold.</p>
-<p>Support any load before enabling a motor: run mode with zero torque lets the joint move freely. Idle mode passively brakes the joint; it does not actively hold a target angle. Keep sending commands to every enabled motor in your control loop.</p>
+<p>Support any load before enabling a motor: run mode with zero torque lets the joint move freely. Idle mode resists motion through passive braking; it does not actively hold a target angle. Keep sending commands to every enabled motor in your control loop.</p>
 <h2>Terms used in this guide</h2>
 <ul>
   <li><b>Frame:</b> one group of bytes sent together. A field is one value within it; DATA[0] is the first byte.</li>
   <li><b>Polling:</b> sending commands to motors in turn and receiving their replies.</li>
-  <li><b>Counts:</b> raw protocol integers, not degrees or speed units. See "Units" for conversions.</li>
+  <li><b>Counts:</b> the whole-number values sent in messages, before conversion to angles, speeds or torque. See "Units" for conversions.</li>
   <li><b>Rotor and output shaft:</b> the rotor turns inside the motor; the output shaft drives the joint through a gearbox.</li>
   <li><b>Gains:</b> control strengths. KP sets the response to position error; KD sets the response to velocity error and provides damping when the velocity target is zero.</li>
   <li><b>Feed-forward torque:</b> torque T requested directly, without using position or velocity error.</li>
@@ -140,40 +141,39 @@ carried over from Unitree's public GO-M8010-6 motor protocol and not checked on 
 <h1 class="pb">Warning</h1>
 <ol>
   <li>A motor in run mode applies torque as soon as it receives a command with non-zero gains or torque. Keep clear of the joint.</li>
-  <li>Never connect a second controller to the bus of a complete robot. The onboard controller polls continuously, and two masters on one RS-485 bus corrupt each other's frames. Listening only is safe.</li>
-  <li>Start with low gains and position targets equal to the measured position. Gains are raw integers with no confirmed physical scale.</li>
-  <li>Stay inside the mechanical end stops. The motor does not know the joint limits; position is a free-running multi-turn count.</li>
-  <li>Do not brake a fast joint with a damping command on a bench power supply. It disturbed the supply and latched a fault on every motor on the bus (see "Status Word"). Stop by switching to idle mode.</li>
-  <li>End stops in counts are not permanent: the position reading can shift by whole output turns after a power cycle or restart.</li>
+  <li>Never connect a second controller to the bus of a complete robot. The robot controller sends commands continuously. If another controller sends at the same time, their messages collide. Receiving without sending does not cause this conflict.</li>
+  <li>Start with low gains and position targets equal to the measured position. Gains are protocol integers; their conversion to physical units has not been confirmed.</li>
+  <li>Stay inside the mechanical end stops. The motor does not know the joint limits; the position count continues across turns rather than returning to zero after each turn.</li>
+  <li>Do not brake a fast joint with a damping command on a bench power supply. In these tests, this changed the supply voltage enough to leave every motor on the bus in a fault state (see "Status Word"). Stop by switching to idle mode.</li>
+  <li>Saved end-stop counts may need adjustment after power-off or restart: readings can shift by the count for one or more complete output-shaft turns.</li>
   <li>A motor that is no longer polled keeps applying its last command for 0.5 to 1 s before it drops to idle. Return motors to idle mode before closing the port.</li>
 </ol>
 
 <h1>Introduction</h1>
-<p>Each arm of the G1 carries its joint motors on one RS-485 chain. The controller is the only master. It addresses one motor at
-a time with a 20-byte command and that motor answers with a 26-byte reply holding its position, velocity, torque, temperatures,
-bus voltage and a status word. A command carries a complete hybrid setpoint (torque, velocity, position and two gains), so there
-are no separate enable, mode or parameter messages: everything is expressed in the one command frame.</p>
+<p>The joint motors in each G1 arm share one RS-485 communication line, called a bus. One controller sends a 20-byte command to one motor at a time. That motor returns a 26-byte reply containing position, speed, torque, temperatures, supply voltage and status.</p>
+<p>Each command includes the working mode, target position, target speed, torque and two gains. The same message format is used to enable a motor, change mode and control motion; these actions do not use separate message types.</p>
 
 <h2>Scope of this guide</h2>
+<p>“Bench tests” below mean tests on a separate wrist assembly, disconnected from the robot controller.</p>
 <table>
   <thead><tr><th class="l">Hardware</th><th class="l">What was done</th></tr>
   </thead>
-<tr><td>G1 arm chain, motor IDs 0-4, on the robot</td><td>Listened only. Boot, zero-torque, damping and locked-standing modes captured; about 3.8 million command/reply pairs decoded.</td></tr>
-  <tr><td>Separate wrist assembly, motor IDs 4, 5, 6, no controller, 24 V supply</td><td>Driven with frames built from this guide: scan, zero torque, position control, feed-forward, speed tests.</td></tr>
+<tr><td>G1 arm chain, motor IDs 0-4, on the robot</td><td>Received without sending. Recorded startup, zero-torque, damping and locked-standing states; decoded about 3.8 million command/reply pairs.</td></tr>
+  <tr><td>Separate wrist assembly, motor IDs 4, 5, 6, no controller, 24 V supply</td><td>Sent commands described here to find motors, apply zero torque, hold positions, add torque directly, and test speed.</td></tr>
 </table>
 
 <h1 class="pb">Bus Overview</h1>
 <table>
   <thead><tr><th class="l" style="width:36%">Item</th><th class="l">Value</th></tr>
   </thead>
-<tr><td>Physical layer</td><td>RS-485, half duplex, two-wire <span class="tag">verified</span></td></tr>
+<tr><td>Communication interface</td><td>RS-485, half duplex, two-wire <span class="tag">verified</span></td></tr>
   <tr><td>Bit rate</td><td>6,000,000 baud, 8 data bits, no parity, 1 stop bit <span class="tag">verified</span></td></tr>
-  <tr><td>Byte order</td><td>Little-endian for all multi-byte fields <span class="tag">verified</span></td></tr>
-  <tr><td>Topology</td><td>One master (controller), up to 15 motors, IDs 0-14 <span class="tag">inferred</span></td></tr>
+  <tr><td>Byte order</td><td>Lowest-value byte first for every multi-byte value (little-endian) <span class="tag">verified</span></td></tr>
+  <tr><td>Connection</td><td>One controller, up to 15 motors, IDs 0-14 <span class="tag">inferred</span></td></tr>
   <tr><td>Access</td><td>Motors transmit only in answer to a command with their ID <span class="tag">verified</span></td></tr>
   <tr><td>Command / reply length</td><td>20 bytes / 26 bytes <span class="tag">verified</span></td></tr>
   <tr><td>Controller polling rate</td><td>About 1,313 commands per second per motor with 5 motors on the chain (one full round every 0.76 ms) <span class="tag">verified</span></td></tr>
-  <tr><td>Lowest rate tried</td><td>About 340 per second per motor; accepted <span class="tag">verified</span></td></tr>
+  <tr><td>Lowest rate tried</td><td>About 340 per second per motor; the motors worked at this rate <span class="tag">verified</span></td></tr>
   <tr><td>Time on the wire</td><td>One command plus reply is 46 bytes, about 77 &#181;s at 6 Mbaud</td></tr>
 </table>
 <div class="note">
@@ -184,7 +184,7 @@ are no separate enable, mode or parameter messages: everything is expressed in t
 
 <h2 class="pb">Wiring</h2>
 <p>A bench motor is driven through the RS-485 accessory kit Unitree sells for its other motors. The figure, from Unitree's
-Motor SDK guide, shows a GO1/B1 motor; a G1 joint plugs in the same way. Cable colours were not examined.</p>
+Motor SDK guide, shows a GO1/B1 motor; a G1 joint plugs in the same way. Wire colours were not checked.</p>
 <figure>
   <img src="../images/wiring_kit.jpg" alt="Unitree motor accessory kit" style="width:70%; display:block; margin:0 auto">
   <figcaption>Unitree RS-485 accessory kit. Image: Unitree Robotics.</figcaption>
@@ -207,17 +207,17 @@ Motor SDK guide, shows a GO1/B1 motor; a G1 joint plugs in the same way. Cable c
 <div class="note">
   <svg viewBox="0 0 24 24"><path d="M12 3 2 21h20z" fill="none" stroke="#222" stroke-width="1.6"/><path d="M12 10v5M12 17.5v1" stroke="#222" stroke-width="1.8"/></svg>
   <p>All bench work in this guide used a <b>24 V</b> supply; the robot's bus runs at about 48 V. On 24 V the speed tops out at about
-  39 rotor turns/s, and a hard damping brake from top speed can pull the supply down to about 15 V and latch fault 0x8 (see
+  39 rotor turns/s, and strong damping while stopping from top speed can pull the supply down to about 15 V and leave fault 0x8 active (see
   "Status Word"). Keep the robot's controller off the bus and check the wiring before switching the supply on.</p>
 </div>
 
 <h1 class="pb">RS-485 Communication Protocol</h1>
 
-<h2>Motor Receiving Message Format</h2>
+<h2>Command Frame (Controller to Motor)</h2>
 <p>The controller sends this frame to command one motor. The motor applies it until the next command arrives.</p>
 <div class="meta"><span>Header: 0xFE 0xEE</span><span>Direction: controller &#8594; motor</span><span>Length: 20 bytes</span><span>Checksum: CRC-32 over DATA[0]-DATA[15]</span></div>
 <table>
-  <thead><tr><th style="width:21%">Data Field</th><th>Description</th><th style="width:15%">Type</th></tr>
+  <thead><tr><th style="width:21%">Byte position</th><th>Description</th><th style="width:15%">Type</th></tr>
   </thead>
 <tr><td class="c">DATA[0]</td><td>Header, 0xFE</td><td class="c" rowspan="2">-</td></tr>
   <tr><td class="c">DATA[1]</td><td>Header, 0xEE</td></tr>
@@ -230,21 +230,25 @@ Motor SDK guide, shows a GO1/B1 motor; a G1 joint plugs in the same way. Cable c
   <tr><td class="c">DATA[14]-DATA[15]</td><td>Velocity (damping) gain KD</td><td class="c">int16</td></tr>
   <tr><td class="c">DATA[16]-DATA[19]</td><td>CRC-32 of DATA[0]-DATA[15]</td><td class="c">uint32</td></tr>
 </table>
-<p>Field positions for POS, KP and KD were confirmed from the robot's mode changes and by driving the bench motors; T was
-confirmed as a torque feed-forward on the bench; W was used as a velocity feed-forward with the expected effect.
-<span class="tag">verified</span></p>
+<p>Changes in robot behaviour and direct motor tests confirmed which bytes hold POS, KP and KD. Tests also confirmed that T directly adds torque and that W acts as the target speed. <span class="tag">verified</span></p>
+<p>Types such as <code>int16</code> are signed integers and can be negative; <code>uint16</code> is unsigned and cannot be negative. The number is the bit width. All multi-byte values use little-endian byte order.</p>
 
-<h3>Control law</h3>
+<h3>How the command controls torque</h3>
 <pre>torque = T + KP &#215; (POS &#8722; measured position) + KD &#215; (W &#8722; measured velocity)</pre>
-<p>This is the standard Unitree hybrid command. <span class="tag">inferred</span> The individual terms behave as written; the
-relative scaling of KP and KD in physical units is not known. The formula explains the control terms; do not substitute raw counts directly to calculate N·m. All fields zero gives zero torque: the joint turns freely.</p>
+<p>The command combines three effects, as in Unitree's usual control scheme. <span class="tag">inferred</span></p>
+<ul>
+  <li><b>T:</b> adds torque directly, without using position or speed error.</li>
+  <li><b>KP:</b> sets how strongly the motor corrects the difference between target and measured position.</li>
+  <li><b>KD:</b> sets how strongly the motor corrects the difference between target and measured speed. With a zero speed target, this resists motion (damping).</li>
+</ul>
+<p>The formula explains these effects, not how to convert raw counts into N·m. The physical scaling of KP and KD is not fully known. In run mode, setting all command fields to zero gives zero torque and lets the joint turn freely.</p>
 
 <div class="keep"><h2>ID and Mode Byte</h2>
 <table>
   <thead><tr><th style="width:14%">Bit</th><th style="width:20%">Name</th><th>Description</th></tr>
   </thead>
-<tr><td class="c">7</td><td class="c">FLAG</td><td>Command only. The robot's controller sets it 2.6 s after it starts polling and keeps it set. Meaning unknown. Not needed to enter run mode. Always 0 in replies in normal operation.</td></tr>
-  <tr><td class="c">6-4</td><td class="c">MODE</td><td>0 = idle: the motor answers and ignores commands. 1 = run: the control law is active. 7 = restart. See "Mode Values". In a reply this is the mode the motor is actually in.</td></tr>
+<tr><td class="c">7</td><td class="c">FLAG</td><td>Used in commands only. The robot controller sets this bit 2.6 s after polling starts and leaves it set. Its purpose is unknown. It is not needed to enter run mode. Replies normally report 0 here.</td></tr>
+  <tr><td class="c">6-4</td><td class="c">MODE</td><td>0 = idle: replies, but ignores motion targets. 1 = run: applies the requested torque, position and speed control. 7 = restart. See "Mode Values". In replies, MODE reports the motor's actual mode.</td></tr>
   <tr><td class="c">3-0</td><td class="c">ID</td><td>Motor address, 0-14. 15 is the broadcast address in Unitree's public GO-M8010-6 protocol; it was never sent here.</td></tr>
 </table></div>
 <table>
@@ -256,52 +260,50 @@ relative scaling of KP and KD in physical units is not known. The formula explai
 </table>
 
 <h2>Mode Values</h2>
-<p>Each value was tried on one bench motor (ID 4): first with every other field zero, then, for modes 3-5, with small torque,
-position, velocity and gain commands that move the joint in mode 1, and with a coast-down from speed. <span class="tag">verified</span>
-What distinguishes modes 0, 3 and 5 from each other was not found.</p>
+<p>Each mode was tested on a separate motor (ID 4), first with all other fields set to zero. For modes 3-5, tests also used small commands that move the joint in mode 1, and checked how it slowed down after switching modes. <span class="tag">verified</span> No difference between modes 0, 3 and 5 was identified in these tests.</p>
 <table>
   <thead><tr><th style="width:12%">MODE</th><th class="l">Behaviour</th></tr>
   </thead>
-<tr><td class="c">0</td><td>Idle. Commands are ignored and the joint is passively braked: spun to about 800 velocity counts and switched to this mode, it stopped in about 10 ms. Used by the controller at boot and for scanning.</td></tr>
-  <tr><td class="c">1</td><td>Run. Entered on the first frame; the reply reports mode 1. Refused while the status word is non-zero.</td></tr>
+<tr><td class="c">0</td><td>Idle. Motion targets are ignored; passive braking resists movement. After running at about 800 velocity counts, the joint stopped in about 10 ms when switched to this mode. Used during startup and scanning.</td></tr>
+  <tr><td class="c">1</td><td>Run. The motor enters this mode on the first command and reports mode 1 in its reply. A non-zero status word prevents entry.</td></tr>
   <tr><td class="c">2</td><td>Ignored: the motor stays in mode 0. No motion.</td></tr>
   <tr><td class="c">3</td><td>Accepted (the reply reports mode 3). Torque, velocity, position and gain fields are ignored. Joint braked as in mode 0: stopped in about 10 ms. Torque reading exactly 0 at rest.</td></tr>
-  <tr><td class="c">4</td><td>Accepted. Command fields are ignored. Joint free-wheels, the same as mode 1 with an all-zero command: took 25-64 ms to stop from the same speed.</td></tr>
+  <tr><td class="c">4</td><td>Accepted. Command fields are ignored. The joint moves freely, as in mode 1 with all command fields zero. It took 25-64 ms to stop from the same speed.</td></tr>
   <tr><td class="c">5</td><td>Accepted. Command fields are ignored. Joint braked as in modes 0 and 3.</td></tr>
-  <tr><td class="c">6</td><td>Set position (zeroing), used by the robot's calibration. Needs a specific payload, see "Zero Position"; with an all-zero payload it is ignored and the motor stays in mode 0.</td></tr>
-  <tr><td class="c">7</td><td>Restart. One frame is enough, with or without FLAG. The motor answers for about 5 ms, is silent until about 300 ms, then answers again in mode 0 with status 0. Clears a latched fault. The position reading may come back shifted (see "Position After Power-On or Restart").</td></tr>
+  <tr><td class="c">6</td><td>Set position (zeroing), used by the robot's calibration. Needs specific data in the command, see "Zero Position". With all data fields zero, the motor ignores it and stays in mode 0.</td></tr>
+  <tr><td class="c">7</td><td>Restart. One frame is enough, with or without FLAG. The motor replies for about 5 ms, stops replying until about 300 ms after the restart began, then replies in mode 0 with status 0. Clears a fault that otherwise stays active. The position reading may come back shifted (see "Position After Power-On or Restart").</td></tr>
 </table>
 
 <h2>Sequence Byte</h2>
 <p>DATA[3] is 0x00 in the first frames after power-on. Once continuous polling starts it changes about every 8 frames
 (about 6 ms). On three of the five robot motors it alternates between 0x80 and 0x90. On the other two the low bits count up
-by one at each change while bit 7 toggles. Its purpose is unknown. The bench motors entered run mode and ran normally with
-the 0x80/0x90 alternation, and also entered run mode with DATA[3] = 0, so no pattern is required for that.</p>
+by one at each change while bit 7 switches between set and clear. Its purpose is unknown. The bench motors entered run mode and ran normally with
+the 0x80/0x90 alternation, and also entered run mode with DATA[3] = 0, so entering run mode did not require a particular sequence.</p>
 
-<div class="keep"><h2>Motor Sending Message Format</h2>
-<p>The addressed motor answers every command, including in idle mode.</p>
+<div class="keep"><h2>Reply Frame (Motor to Controller)</h2>
+<p>A motor replies to commands sent to its ID, including in idle mode.</p>
 <div class="meta"><span>Header: 0xFC 0xEE</span><span>Direction: motor &#8594; controller</span><span>Length: 26 bytes</span><span>Checksum: CRC-32 over DATA[2]-DATA[21]</span></div>
 <table>
-  <thead><tr><th style="width:21%">Data Field</th><th>Description</th><th style="width:15%">Type</th></tr>
+  <thead><tr><th style="width:21%">Byte position</th><th>Description</th><th style="width:15%">Type</th></tr>
   </thead>
 <tr><td class="c">DATA[0]</td><td>Header, 0xFC</td><td class="c" rowspan="2">-</td></tr>
   <tr><td class="c">DATA[1]</td><td>Header, 0xEE</td></tr>
   <tr><td class="c">DATA[2]</td><td>Motor ID (bits 3-0) and current mode (bits 6-4)</td><td class="c">uint8</td></tr>
   <tr><td class="c">DATA[3]</td><td>Coil (winding) temperature, &#176;C <span class="tag">inferred</span></td><td class="c">uint8</td></tr>
-  <tr><td class="c">DATA[4]</td><td>Shell temperature, &#176;C; reads 0-5 below the coil temperature <span class="tag">inferred</span></td><td class="c">uint8</td></tr>
+  <tr><td class="c">DATA[4]</td><td>Outer casing temperature, &#176;C; reads 0-5 below the coil temperature <span class="tag">inferred</span></td><td class="c">uint8</td></tr>
   <tr><td class="c">DATA[5]</td><td>Bus voltage, 0.5 V per count <span class="tag">verified</span></td><td class="c">uint8</td></tr>
   <tr><td class="c">DATA[6]-DATA[7]</td><td>Torque</td><td class="c">int16</td></tr>
   <tr><td class="c">DATA[8]-DATA[9]</td><td>Velocity</td><td class="c">int16</td></tr>
-  <tr><td class="c">DATA[10]-DATA[13]</td><td>Position, multi-turn</td><td class="c">int32</td></tr>
+  <tr><td class="c">DATA[10]-DATA[13]</td><td>Position count, continuous across turns</td><td class="c">int32</td></tr>
   <tr><td class="c">DATA[14]-DATA[17]</td><td>Status word; 0 in normal operation (see "Status Word")</td><td class="c">uint32</td></tr>
-  <tr><td class="c">DATA[18]-DATA[19]</td><td>Unknown; 2,600-3,050, noisy</td><td class="c">uint16</td></tr>
+  <tr><td class="c">DATA[18]-DATA[19]</td><td>Unknown; varies around 2,600-3,050</td><td class="c">uint16</td></tr>
   <tr><td class="c">DATA[20]</td><td>Unknown; 0</td><td class="c">uint8</td></tr>
   <tr><td class="c">DATA[21]</td><td>Unknown; 0 on most motors, changes every frame on two robot motors</td><td class="c">uint8</td></tr>
   <tr><td class="c">DATA[22]-DATA[25]</td><td>CRC-32 of DATA[2]-DATA[21]</td><td class="c">uint32</td></tr>
 </table></div>
 <p>Sending frequency: one reply per command, so it follows the controller (about 1.3 kHz on the robot).<br>
 Position: same unit as the command position; it matched the target to within 1-2 counts when holding. <span class="tag">verified</span><br>
-Bus voltage: read 24.0-24.5 V on a 24 V bench supply and 47.0-48.5 V on the robot (battery), with brief excursions between 44.5 and 50 V. <span class="tag">verified</span></p>
+Bus voltage: read 24.0-24.5 V on a 24 V bench supply and 47.0-48.5 V on the robot (battery), with brief changes to 44.5 and 50 V. <span class="tag">verified</span></p>
 <div class="note">
   <svg viewBox="0 0 24 24"><path d="M12 3 2 21h20z" fill="none" stroke="#222" stroke-width="1.6"/><path d="M12 10v5M12 17.5v1" stroke="#222" stroke-width="1.8"/></svg>
   <p>The reply header is 0xFC 0xEE, and the reply checksum does not cover the header. Both differ from the command, and from
@@ -309,9 +311,9 @@ Bus voltage: read 24.0-24.5 V on a 24 V bench supply and 47.0-48.5 V on the robo
 </div>
 
 <h2>Checksum</h2>
-<p>CRC-32 with polynomial 0x04C11DB7, initial value 0xFFFFFFFF, no bit reflection and no final XOR. The data is taken as 32-bit
-little-endian words, each fed most-significant bit first. The result is stored little-endian. This is the <code>crc32_core</code>
-routine of Unitree's public A1/B1 motor SDK. <span class="tag">verified</span> on 3.8 million frames.</p>
+<p>The checksum detects damaged messages. Use the exact algorithm below: a general CRC-32 function may use different settings and give a different result.</p>
+<p>The settings are polynomial 0x04C11DB7, initial value 0xFFFFFFFF, no bit reflection and no final XOR. Read the bytes as 32-bit little-endian words, then process each word from its highest bit to its lowest bit. Store the result with the lowest-value byte first.</p>
+<p>This is Unitree's <code>crc32_core</code> algorithm from the public A1/B1 motor SDK, checked against 3.8 million frames. <span class="tag">verified</span> For a reply, copy the covered bytes into aligned memory before calling the function below.</p>
 <pre>uint32_t crc32_core(const uint32_t *words, uint32_t count) {
     uint32_t crc = 0xFFFFFFFF;
     for (uint32_t i = 0; i &lt; count; i++) {
@@ -333,7 +335,7 @@ routine of Unitree's public A1/B1 motor SDK. <span class="tag">verified</span> o
   <tr><td class="hex">FE EE 00 00 00 00 00 00 00 00 00 00 00 00 00 00</td><td class="c mono">0x79204680</td><td class="c mono">80 46 20 79</td></tr>
 </table>
 
-<h2>Example Frames</h2>
+<div class="keep"><h2>Example Frames</h2>
 <p>All captured from the robot except where noted.</p>
 <table>
   <thead><tr><th class="l" style="width:24%">Meaning</th><th class="l">Bytes</th></tr>
@@ -342,7 +344,7 @@ routine of Unitree's public A1/B1 motor SDK. <span class="tag">verified</span> o
   <tr><td>Run, zero torque, ID 0</td><td class="hex">FE EE 90 80 00 00 00 00 00 00 00 00 00 00 00 00 9B 1E 41 06</td></tr>
   <tr><td>Run, damping only (KD 25), ID 0</td><td class="hex">FE EE 90 80 00 00 00 00 00 00 00 00 00 00 19 00 54 1E D6 14</td></tr>
   <tr><td>Run, hold position 25,032 with KP 450, KD 10, ID 0</td><td class="hex">FE EE 90 80 00 00 00 00 C8 61 00 00 C2 01 0A 00 71 DC 7C 64</td></tr>
-</table>
+</table></div>
 <div class="keep"><p>Decoding a reply:</p>
 <pre>FC EE 12 24 23 61 FF FF F8 FF C6 3D FD FF
 00 00 00 00 CC 0B 00 C8 25 63 AD 8C
@@ -360,15 +362,14 @@ CC 0B        3,020 (unknown)
 
 <h1>Operating the Motor</h1>
 
-<h2>Modes Used by the G1 Controller</h2>
-<p>The controller never changes the frame type. Robot behaviour is set entirely by the fields of the run-mode command.
-<span class="tag">verified</span></p>
+<h2>How the G1 Controller Uses Run Mode</h2>
+<p>The controller uses the same command format for each behaviour below. In run mode, changing the torque, targets and gains changes what the joint does. <span class="tag">verified</span></p>
 <table>
   <thead><tr><th class="l" style="width:24%">Robot state</th><th class="l">Command content</th></tr>
   </thead>
 <tr><td>Zero torque</td><td>T, W, POS, KP, KD all 0</td></tr>
   <tr><td>Damping</td><td>KD only. Values seen on arm IDs 0-4: 25, 25, 0, 1, 0</td></tr>
-  <tr><td>Locked standing</td><td>POS = present position, then ramped by the controller toward the standing pose. KP / KD seen on IDs 0-4: 450/10, 300/5, 100/2, 300/5, 20/1</td></tr>
+  <tr><td>Locked standing</td><td>POS = present position, then gradually changed by the controller toward the standing pose. KP / KD seen on IDs 0-4: 450/10, 300/5, 100/2, 300/5, 20/1</td></tr>
 </table>
 
 <h2>Power-On Sequence of the Robot</h2>
@@ -379,7 +380,7 @@ CC 0B        3,020 (unknown)
 <tr><td class="c">0 s</td><td>18 frames, 3-4 per motor: DATA[2] = ID, DATA[3] = 0, T = &#8722;128, all else 0</td><td>All answer in mode 0</td></tr>
   <tr><td class="c">0-7.0 s</td><td>Silent</td><td>-</td></tr>
   <tr><td class="c">7.0 s</td><td>Continuous polling starts, mode 0, all fields 0</td><td>Mode 0</td></tr>
-  <tr><td class="c">7.0-7.1 s</td><td>IDs 2 and 3 only: about 114 frames with a fixed 12-byte pattern in DATA[4]-DATA[15]</td><td>IDs 2 and 3 switch from a fixed data block to normal telemetry</td></tr>
+  <tr><td class="c">7.0-7.1 s</td><td>IDs 2 and 3 only: about 114 frames with a fixed 12-byte pattern in DATA[4]-DATA[15]</td><td>IDs 2 and 3 switch from a fixed data block to normal position, temperature and other readings</td></tr>
   <tr><td class="c">9.6 s</td><td>FLAG bit set (0x80 + ID)</td><td>Mode 0</td></tr>
   <tr><td class="c">33.2 s</td><td>MODE = 1 on all motors in the same round (0x90 + ID)</td><td>Report mode 1 from the next frame</td></tr>
 </table>
@@ -387,9 +388,7 @@ CC 0B        3,020 (unknown)
 <div class="note">
   <svg viewBox="0 0 24 24"><path d="M12 3 2 21h20z" fill="none" stroke="#222" stroke-width="1.6"/><path d="M12 10v5M12 17.5v1" stroke="#222" stroke-width="1.8"/></svg>
   <p>IDs 2 and 3 of the observed chain do not report position or temperature until they have received a 12-byte pattern;
-  before that, DATA[3]-DATA[13] of their replies hold a block of data and DATA[14]-DATA[15] read 00 80. This is a
-  challenge and response: after a later restart both the block and the pattern were different. The algorithm is not
-  known, so these two motors cannot be brought up without the robot's controller. The three bench motors (IDs 4, 5, 6)
+  before that, DATA[3]-DATA[13] of their replies hold a block of data and DATA[14]-DATA[15] read 00 80. This is a startup check called challenge and response: the motor sends data and the controller returns matching data. Both changed after a later restart. How the controller calculates its reply is unknown, so this project cannot start these two motors without the robot controller. The three bench motors (IDs 4, 5, 6)
   needed no such step.</p>
 </div>
 
@@ -400,7 +399,7 @@ CC 0B        3,020 (unknown)
   <li>Scan: send the idle poll (DATA[2] = ID, everything else 0) to IDs 0-14. Motors present answer in mode 0.</li>
   <li>Poll each motor about 20 times with the idle poll.</li>
   <li>Poll each motor about 50 times with FLAG set (0x80 + ID), DATA[3] alternating 0x80 / 0x90 every 8 rounds.</li>
-  <li>Send run-mode commands (0x90 + ID) with all fields 0. The reply then shows mode 1 (on the robot, from the very next frame). The joint is now free.</li>
+  <li>Send run-mode commands (0x90 + ID) with all motion fields 0. The reply then shows mode 1 (on the robot, from the very next frame). The joint is now free.</li>
   <li>Command motion by filling POS, W, T, KP, KD. Keep polling every motor in a steady loop.</li>
   <li>To stop: send idle polls (MODE 0) until the reply shows mode 0. Idle brakes the joint passively; from top speed the bench joints stopped in 18-27 ms with the supply voltage steady. Do not stop a fast joint with a damping command on a bench supply (see "Status Word").</li>
 </ol>
@@ -414,29 +413,22 @@ then brakes passively. <span class="tag">verified</span></p>
 <table>
   <thead><tr><th style="width:26%">Value (uint32)</th><th class="l">Situation</th></tr>
   </thead>
-<tr><td class="c mono">0x00000008</td><td>Appears when the bus voltage reading falls to about 15 V. Seen on all three bench motors in two ways, both while braking from top speed with a damping command on a 24 V bench supply. With KD 80 the torque reading jumped to 419-689 counts and the voltage fell at once to 15-19 V; the status stayed latched. With a torque-limited brake (about 180 counts) the voltage first rose to 30 V, then collapsed to 10 V about 130 ms later; the motors restarted by themselves when it returned. While the status is set the motor stays in mode 0 and ignores MODE = 1.</td></tr>
+<tr><td class="c mono">0x00000008</td><td>Appears when the bus voltage reading falls to about 15 V. Seen on all three bench motors in two ways, both while braking from top speed with a damping command on a 24 V bench supply. With KD 80 the torque reading jumped to 419-689 counts and the voltage fell at once to 15-19 V; the fault stayed active. With a torque-limited brake (about 180 counts) the voltage first rose to 30 V, then collapsed to 10 V about 130 ms later; the motors restarted by themselves when the voltage recovered. While the status is set the motor stays in mode 0 and ignores MODE = 1.</td></tr>
   <tr><td class="c mono">0x00040000</td><td>Robot IDs 2 and 3 for about 0.4 s during boot, with normal operation afterwards.</td></tr>
   <tr><td class="c mono">0x00008000</td><td>Robot IDs 2 and 3 before they received their 12-byte pattern (these bytes may not be a status word in that state).</td></tr>
 </table>
-<p>0x00000008 is therefore most likely an under-voltage flag, and the damping brakes caused it by disturbing the supply.
-Switching to idle from the same speed left the voltage at 24.0-24.5 V and the status at 0. The meaning of the other bits
-is unknown. <b>Clearing a fault:</b> send one frame with MODE = 7 (restart), or switch the motor
-supply off for about 10 s. These did not clear it: idle polling, run-mode commands, damping commands, the power-on
-probe frames, and 15 s of silence.</p>
+<p>0x00000008 most likely means the supply voltage is too low (under-voltage). Damping while stopping caused large voltage changes. Switching to idle from the same speed kept the voltage at 24.0-24.5 V and the status at 0. The other status bits are not yet understood.</p>
+<p><b>Clearing this fault:</b> send one command with MODE = 7 (restart), or turn the motor supply off for about 10 s. Idle polls, run-mode commands, damping commands, the initial startup messages and 15 s without commands did not clear it.</p>
 
 <h2>Position After Power-On or Restart</h2>
-<p>The position reading is multi-turn, but after a power cycle or a restart it can come back shifted by a whole number of
-output-shaft turns. Seen: 524,288 counts (16 rotor turns) on ID 4 and 819,200 counts (25 rotor turns) on ID 6, in both
-directions; other restarts shifted nothing. This also gives the reduction ratios of those two joints, 16:1 and 25:1.
-<span class="tag">inferred</span> Because the shift is always a whole output turn, the motor does know the joint's position
-within one turn: an end stop or zero stored in counts becomes valid again once it is moved by the same whole number of
-turns. Check this against the reading after every power-on or restart.</p>
+<p>Position counts continue across turns, but restarting or turning the power off and on can change the reading even when the joint has not moved. The change can equal one or more complete output-shaft turns.</p>
+<p>Observed shifts were 524,288 counts (16 rotor turns) on ID 4 and 819,200 counts (25 rotor turns) on ID 6, in either direction. Some restarts caused no shift. These measurements suggest gear ratios of 16:1 and 25:1. <span class="tag">inferred</span></p>
+<p>The readings still identify position within one output-shaft turn. Saved end-stop and zero counts need the same whole-turn adjustment as the reading. Check them after every power-on or restart before using them to command motion.</p>
 
 <h2>Zero Position</h2>
 <p>The position reading is the joint angle: on the robot's arm chain (IDs 0-4) it is 524,288 counts per output turn
 (16 &#215; 32,768) with 0 at the joint's zero. <span class="tag">verified</span></p>
-<p>The zero is set with MODE = 6. This was captured while the robot ran its own joint calibration; it has not been
-reproduced with frames of our own. <span class="tag">inferred</span> The controller's sequence:</p>
+<p>MODE = 6 appears to set the zero position. This was recorded while the robot calibrated its joints; it has not been repeated with commands from this project. <span class="tag">inferred</span> The table records what the robot did, rather than a tested calibration procedure for users:</p>
 <table>
   <thead><tr><th style="width:8%">Step</th><th class="l">Frames</th></tr>
   </thead>
@@ -447,30 +439,30 @@ reproduced with frames of our own. <span class="tag">inferred</span> The control
 <p>The five angles sent were +153.00&#176;, +129.00&#176;, +150.00&#176;, &#8722;59.99&#176; and +113.00&#176; for IDs 0-4, and at that moment each
 motor's position reading equalled its angle &#215; 524,288 / 360&#176; to within 0.01 %. The 6-byte constant was the same for
 all five motors; it is recorded in the lab notes (<code>docs/lab_notes.md</code>), and whether it differs between robots or firmware versions is
-unknown. Setting a zero is presumably permanent; do not send mode 6 without knowing the joint's true angle.</p>
+unknown. The zero setting may be permanent. Do not send mode 6 unless you know the joint's true angle.</p>
 <p>Without recalibrating, a zero can also be kept in software: store the reading at a known pose and, after each power-on,
-move the stored value by whole output turns to match the reading.</p>
+add or subtract the count for complete output-shaft turns so the stored value matches the current reading.</p>
 
 <h2>Units</h2>
+<p>Commands and replies use raw counts. Convert them before treating a value as radians, radians per second or N·m. Position, speed and torque scales below refer to the motor rotor, not the joint output shaft. The torque scale is assumed, not measured.</p>
 <table>
   <thead><tr><th class="l">Quantity</th><th class="l">Scale</th><th style="width:19%">Basis</th></tr>
   </thead>
 <tr><td>Position</td><td>2&#960; / 32,768 rad per count (32,768 counts per rotor turn). Supported by the restart jumps of exactly 16 &#215; 32,768 and 25 &#215; 32,768 counts</td><td class="c">inferred</td></tr>
   <tr><td>Velocity</td><td>2&#960; / 256 rad/s per count; follows from the position scale and the ratio below</td><td class="c">inferred</td></tr>
-  <tr><td>Velocity vs position</td><td>1 velocity count = 128 position counts per second (measured 114-124 with a lagging estimator)</td><td class="c">verified</td></tr>
+  <tr><td>Velocity vs position</td><td>1 velocity count = 128 position counts per second (measured 114-124 using an estimate that responds with a delay)</td><td class="c">verified</td></tr>
   <tr><td>Torque</td><td>1 / 256 N&#183;m per count</td><td class="c">assumed</td></tr>
-  <tr><td>Command torque vs reply torque</td><td>Same unit to within the test's resolution: feeding forward the reported friction torque removed it</td><td class="c">verified</td></tr>
+  <tr><td>Command torque vs reply torque</td><td>Same unit within measurement accuracy: using the reported friction torque as the direct torque command cancelled its effect</td><td class="c">verified</td></tr>
   <tr><td>Bus voltage</td><td>0.5 V per count</td><td class="c">verified</td></tr>
   <tr><td>Damping torque</td><td>0.005 &#215; KD &#215; velocity reading, in torque counts (steady speed under a constant torque, KD 10-80: 0.0049-0.0051). The motor's torque limit caps it: 400-700 counts was the most seen</td><td class="c">verified</td></tr>
-  <tr><td>Torque reading</td><td>The net torque the motor applies (feed-forward plus position and damping terms), not the feed-forward alone</td><td class="c">verified</td></tr>
-  <tr><td>KP</td><td>Raw; no physical scale established</td><td class="c">unknown</td></tr>
+  <tr><td>Torque reading</td><td>Total torque applied by the motor: direct torque plus the position and damping contributions</td><td class="c">verified</td></tr>
+  <tr><td>KP</td><td>Protocol integer; conversion to physical units not established</td><td class="c">unknown</td></tr>
   <tr><td>Gear ratio</td><td>16:1 on bench ID 4, 25:1 on ID 6, from the size of the restart jump; ID 5 has the same travel as ID 6 and is taken as 25:1</td><td class="c">inferred</td></tr>
 </table>
-<p>All quantities refer to the motor rotor, before the joint's reduction gear. Divide positions and speeds by the gear ratio
-for the output shaft.</p>
+<p>To get output-shaft angle or speed, first convert the counts to rotor angle or speed, then divide by the gear ratio. A software zero defines the reference angle. The drivers' <code>units</code> functions handle rotor conversions; <code>Joint</code> handles output-shaft angles and the software zero.</p>
 
-<h1>Observed Characteristics</h1>
-<p>Measured on the bench wrist assembly (IDs 4, 5, 6) at 24 V unless stated. These are observations on one unit, not ratings.</p>
+<h1>Measurements from the Tests</h1>
+<p>Measured on the bench wrist assembly (IDs 4, 5, 6) at 24 V unless stated. These results describe the tested assembly, not manufacturer specifications or guaranteed limits.</p>
 <table>
   <thead><tr><th class="l" colspan="2">Communication</th></tr>
   </thead>
@@ -487,17 +479,17 @@ for the output shaft.</p>
   <tr><td>Travel between end stops, ID 4 / 5 / 6</td><td>331,007 / 425,735 / 427,100 counts = about 227&#176; / 187&#176; / 187&#176; at the output</td></tr>
   <tr><td>Time to stop from 800 velocity counts, ID 4</td><td>about 10 ms in modes 0, 3, 5; 25-64 ms free (modes 1 and 4, zero command)</td></tr>
   <tr><td>Stopping from top speed by switching to idle</td><td>18 / 27 / 24 ms on ID 4 / 5 / 6, travel 1,083 / 7,757 / 6,898 counts, voltage 24.0-24.5 V, no fault</td></tr>
-  <tr><td>Damping brakes from top speed</td><td>KD 80: torque reading 419-689 (the damping term asked for about 4,000), supply sagged to 15 V, fault latched. About 180 counts: supply rose to 30 V, then cut out</td></tr>
+  <tr><td>Damping brakes from top speed</td><td>KD 80: torque reading 419-689 (the damping term asked for about 4,000), supply fell to 15 V and the fault stayed active. About 180 counts: supply rose to 30 V, then cut out</td></tr>
   <tr><td>Gains that gave smooth tracking</td><td>KP 300; KD 40 (ID 4), 80 (IDs 5, 6)</td></tr>
   <tr><td>Gains too weak to track</td><td>KP 20, KD 1: IDs 5 and 6 stay behind or drift under load, depending on the pose (also at KP 100, KD 2 in one pose)</td></tr>
   <tr><td>Friction, direction-dependent part, ID 4 / 5 / 6</td><td>about 4 / 19 / 12 torque counts</td></tr>
-  <tr><td>Fastest full-range sine that still tracked</td><td>0.8 s period over 80 % of the travel; peak lag 1,505 / 8,656 / 7,266 counts</td></tr>
-  <tr><td>Velocity ripple with the gains above</td><td>3-4 % of peak speed</td></tr>
+  <tr><td>Fastest tested sine-wave motion the joints could follow</td><td>0.8 s period over 80 % of the travel; peak lag 1,505 / 8,656 / 7,266 counts</td></tr>
+  <tr><td>Speed variation with the gains above</td><td>3-4 % of peak speed</td></tr>
 </table>
 <table>
-  <thead><tr><th class="l" colspan="2">Telemetry</th></tr>
+  <thead><tr><th class="l" colspan="2">Motor readings</th></tr>
   </thead>
-<tr><td style="width:52%">Bus voltage reading</td><td>24.0-24.5 V (bench); 47.0-48.5 V on the robot, falling through the day as the battery discharged, with brief excursions to 44.5 and 50 V</td></tr>
+<tr><td style="width:52%">Bus voltage reading</td><td>24.0-24.5 V (bench); 47.0-48.5 V on the robot, falling through the day as the battery discharged, with brief changes to 44.5 and 50 V</td></tr>
   <tr><td>Temperature readings</td><td>coil 28-39 &#176;C, shell 24-38 &#176;C during these tests; the shell reading equals the coil reading right after a restart</td></tr>
   <tr><td>Position resolution</td><td>1 count; holds within 1-2 counts of a target at rest on the robot</td></tr>
 </table>
@@ -505,18 +497,18 @@ for the output shaft.</p>
 <div class="keep"><h1>Open Questions</h1>
 <ul>
   <li>Meaning of the FLAG bit and of the sequence byte (neither is needed to enter run mode).</li>
-  <li>The challenge-and-response algorithm used by some motors after every restart.</li>
+  <li>How the controller calculates the startup response required by some motors after every restart.</li>
   <li>Mode 6: the meaning of DATA[4]-DATA[5] = 00 FC and of the 6-byte constant; reproducing it on a bench motor.</li>
   <li>Bit meanings of the status word.</li>
   <li>Purpose of modes 3, 4 and 5, and what separates modes 0, 3 and 5.</li>
-  <li>Absolute scale of torque and KP; gear ratios of the other joints.</li>
+  <li>Conversion of torque and KP to physical units; gear ratios of the other joints.</li>
     <li>Reply fields DATA[18]-DATA[21].</li>
     <li>Whether ID 15 is a broadcast address, and how a motor's ID is assigned.</li>
 </ul></div>
 
 <div class="keep"><h1>Software</h1>
-<p>Drivers implementing this guide accompany it in Python, C++ and MATLAB (<code>g1motor</code>), with the same names in each. In Python:</p>
-<p>This example enables and continuously commands only ID 4. Scan first and replace the ID with one on your bus. The gains were tested on a 24 V bench wrist, not every G1 joint. On an enabled motor, <code>bus.read()</code> sends zero torque and interrupts a hold; use the state returned by <code>command()</code> instead. A missing or invalid reply returns <code>None</code>.</p>
+<p>The <code>g1motor</code> drivers implement this protocol in Python, C++ and MATLAB. The three versions use the same API names. This Python example holds one motor at its starting position:</p>
+<p>This example enables and continuously commands only ID 4. Scan first and replace the ID with one on your bus. These gains were tested on a separate wrist assembly at 24 V; check their suitability for your joint. On an enabled motor, <code>bus.read()</code> sends zero torque and interrupts a hold; use the state returned by <code>command()</code> instead. A missing or invalid reply returns <code>None</code>.</p>
 <pre>from g1motor import MotorBus
 
 with MotorBus() as bus:                    # 6 Mbaud; refuses a busy bus
@@ -539,6 +531,7 @@ with MotorBus() as bus:                    # 6 Mbaud; refuses a busy bus
   <tr><td class="c">V0.5</td><td class="c">2026-11-25</td><td>After a full re-test: damping scale corrected to 0.005; robot voltage range corrected; FLAG and sequence byte not required; behaviour when polling stops; stop by switching to idle.</td></tr>
   <tr><td class="c">V0.6</td><td class="c">2026-11-26</td><td>Wiring: accessory kit, motor connector pinout, 24 V bench supply.</td></tr>
   <tr><td class="c">V0.7</td><td class="c">2026-11-26</td><td>Plain-language terms and getting-started steps; clearer raw-unit guidance and driver example; simpler Chinese edition.</td></tr>
+  <tr><td class="c">V0.8</td><td class="c">2026-11-26</td><td>English edition: simpler explanations throughout, clearer control terms, startup behaviour, fault recovery and unit conversions.</td></tr>
 </table>
 
 </body>
