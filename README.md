@@ -93,3 +93,8 @@ The bus runs at 6,000,000 baud, a non-standard rate. No general serial library i
   polling rate: set to 1 ms automatically on Linux, by hand on Windows (Device Manager, the COM
   port, Port Settings, Advanced). At 1 ms all three interfaces reach about 330 exchanges per
   second per motor with three motors; the robot's own controller does about 1,313.
+
+## License
+
+MIT; see [`LICENSE`](LICENSE). Unitree and G1 are trademarks of Unitree Robotics, which neither
+endorses nor supports this project.
