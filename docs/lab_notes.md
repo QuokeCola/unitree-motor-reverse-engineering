@@ -1,5 +1,11 @@
 # G1 arm motor bus (observed 2026-11-25)
 
+These are chronological research notes, including provisional interpretations.
+Later sections supersede early guesses (for example, the velocity scale and
+fault-reset behavior). For the consolidated protocol, use the
+[protocol guide](G1_Joint_Motor_Protocol_Guide.pdf); for driver setup, start with
+the [repository README](../README.md).
+
 Passive capture on one arm chain of a Unitree G1, FT232H adapter. Nothing transmitted.
 Status: field names are inferred from the public GO-M8010-6 layout and from how
 values moved between robot modes. Scales and units are not known yet.
@@ -8,7 +14,7 @@ values moved between robot modes. Scales and units are not known yet.
 
 - RS-485, 6,000,000 baud, 8N1 (4M / 4.8M / 5M / 8M / 12M all give garbage)
 - 5 motors, ids 0-4, polled in turn, about 1,300 command/reply pairs per second per motor
-- pyserial cannot set 6M on this machine; `scripts/sniff.py` sets it with TCSETS2/BOTHER
+- pyserial cannot set 6M on this machine; `python/tools/sniff.py` sets it with TCSETS2/BOTHER
 
 ## Command, host -> motor, 20 bytes (little-endian)
 
@@ -48,7 +54,7 @@ Same `crc32_core` as the public A1/B1 SDK: init `0xFFFFFFFF`, polynomial `0x04C1
 no reflection, no final XOR, fed 32-bit little-endian words most-significant bit first
 (equal to CRC-32/MPEG-2 with the bytes of each word reversed). Stored little-endian.
 Checked on capture 122254: 1,969,826 of 1,969,826 commands and 1,969,825 of 1,969,826
-replies match. Vectorised implementation: `crc32_words` in `scripts/monitor.py`.
+replies match. Vectorised implementation: `crc32_words` in `python/tools/monitor.py`.
 
 ## Boot sequence (capture 124403_boot_6000000, times from first bus activity)
 
@@ -87,7 +93,7 @@ No extra frames at any mode change; only the payload fields change.
 ## Bench arm without controller (2026-11-25)
 
 Separate arm, 24 V supply, no controller. Bus silent. Polled ids 0-14 with the idle frame
-(mode 0, all fields zero, byte 3 = 0) using `scripts/scan.py`: ids 4, 5 and 6 answered with
+(mode 0, all fields zero, byte 3 = 0) using `python/tools/scan.py`: ids 4, 5 and 6 answered with
 normal telemetry in mode 0, first try, no init needed. So a motor answers a bare mode-0 poll.
 
 ### Driving the bench arm (same day)
@@ -99,7 +105,7 @@ normal telemetry in mode 0, first try, no init needed. So a motor answers a bare
 - Position control works: mode 1, position ramp + kp/kd (+ velocity = ramp speed / 128).
   kp 20/kd 1 and kp 100/kd 2 were too weak for ids 5, 6; kp 300/kd 5 swept all three joints
   over 80% of their range at 50,000 counts/s. Peak lag / torque reading: id 4 1,132 / 13,
-  id 5 4,661 / 59, id 6 8,251 / 94. Scripts: `scripts/zero_torque.py`, `scripts/sweep.py`.
+  id 5 4,661 / 59, id 6 8,251 / 94. Scripts: `python/tools/zero_torque.py`, `python/tools/sweep.py`.
 - Reported torque is not proportional to kp x error across these runs (kp 20: ~9 counts at
   5,000 error; kp 100: ~24), so the gain scale is still open.
 - Smoothness tuning on an 8 s sine (peak about 134,000 counts/s), kp 300, velocity ripple as %
@@ -107,7 +113,7 @@ normal telemetry in mode 0, first try, no init needed. So a motor answers a bare
   kd 20: 5.3 / 4.9 / 6.0; kd 40: 4.2 / 4.0 / 4.7; kd 80: 3.6 / 3.2 / 3.5. At kd 80, id 4's
   torque reading chatters (peak 37 vs 14-20), so kd 40 / 80 / 80 was kept: 3.8 / 3.0 / 3.7.
   The velocity feed-forward must be the exact derivative of the target; differencing targets
-  over uneven poll times adds ripple. Report tool: `scripts/smoothness.py`.
+  over uneven poll times adds ripple. Report tool: `python/tools/smoothness.py`.
 - Friction feed-forward through the command torque field works, and its units match the reply
   torque reading closely enough to use fitted values directly. Fit on the kd 40/80/80 sine
   (torque counts): id 4 3.7 sign(v); id 5 18.7 sign(v) + 1.5 v/1e5; id 6 11.6 sign(v) + 6.0 v/1e5
@@ -115,7 +121,7 @@ normal telemetry in mode 0, first try, no init needed. So a motor answers a bare
   feed-forward: id 4 719 / 546 / 387; id 5 2,213 / 1,570 / 972; id 6 1,707 / 1,102 / 544.
   Velocity ripple did not change (about 3-4%). The remaining lag ripple repeats with position
   from one pass to the next (correlation 0.83 / 0.80 / 0.99), so it is position-dependent.
-- Position-dependent feed-forward: `scripts/build_ff_table.py` averages the reported torque in
+- Position-dependent feed-forward: `python/tools/build_ff_table.py` averages the reported torque in
   1,024-count position bins per direction from a slow sine (16 s period) and writes
   `calibration/ff_table_ids456.json`; `sweep.py --ff-table` applies it. On the 8 s sine, lag rms
   with the simple friction model vs the table: id 4 387 / 438, id 5 972 / 375, id 6 544 / 161.
@@ -152,7 +158,7 @@ normal telemetry in mode 0, first try, no init needed. So a motor answers a bare
 - Did NOT clear it (status and enable checked after each, all three motors): run-mode damping
   (0x9N, kd 25) for 1 s; idle + flag with kd 25 for 1 s; the boot probe (0x0N, byte 3 = 0,
   torque -128) for 4 rounds and for 1 s; boot probe then 7 s of silence; 15 s of silence.
-  Script: `scripts/fault_clear_test.py`. Mode values 2-7 were not tried.
+  Script: `python/tools/fault_clear_test.py`. Mode values 2-7 were not tried.
 - Position zero after power-on: id 4's end stops moved from -95,045..235,962 to 430,029..760,923,
   a shift of 525,074 counts = 16.02 rotor turns (16 turns = 524,288). Ids 5 and 6 did not shift.
   The earlier power cycle shifted nothing. Reading: position at power-on is only known modulo
@@ -171,14 +177,14 @@ normal telemetry in mode 0, first try, no init needed. So a motor answers a bare
 - After a mode-7 restart, id 4's position reading dropped by 524,764 (16 turns = 524,288) and id 6's
   rose by 819,199 (25 turns = 819,200); id 5 did not shift. Temperature B read equal to temperature A
   right after the restart. Gear ratios inferred: id 4 16:1, id 6 25:1 (id 5 presumably 25:1, same travel).
-- `scripts/sweep.py` now shifts the stored end stops by whole output turns to match the reading and
+- `python/tools/sweep.py` now shifts the stored end stops by whole output turns to match the reading and
   aborts if they still do not fit. SDK: `MotorBus.restart()`, `g1motor restart`.
-- Scripts: `scripts/mode_probe.py`.
+- Scripts: `python/tools/mode_probe.py`.
 
 ### Modes 3, 4, 5 characterised on bench id 4 (2026-11-25)
 
-Eight short tests from rest at mid-travel (`scripts/mode_characterize.py`), then a coast-down from
-about 800 velocity counts with an all-zero command (`scripts/mode_coastdown.py`).
+Eight short tests from rest at mid-travel (`python/tools/mode_characterize.py`), then a coast-down from
+about 800 velocity counts with an all-zero command (`python/tools/mode_coastdown.py`).
 
 | Mode | Torque +/-15 | Position step (kp 100) | Velocity +/-300 (kd 20) | Coast-down to <50 | Torque reading at rest |
 |---|---|---|---|---|---|
@@ -247,7 +253,7 @@ The mode-6 angle is the joint angle at that end stop, int32 with 2^31 = one outp
 
 ## Full re-test of the guide (2026-11-25)
 
-`scripts/verify_captures.py` (28 checks against the robot captures) and `scripts/verify_bench.py`
+`python/tools/verify_captures.py` (28 checks against the robot captures) and `python/tools/verify_bench.py`
 (34 live checks on the bench wrist, including sine runs through `sweep.py`).
 
 Corrections that came out of it:
