@@ -60,7 +60,7 @@
   <div class="brand">G1 Joint Motor</div>
   <div class="title">RS-485 Communication Protocol</div>
   <div class="kind">Unofficial User Guide</div>
-  <div class="ver"><span>V0.5</span>2026.11</div>
+  <div class="ver"><span>V0.6</span>2026.11</div>
   <table class="key">
     <tr><th class="l" colspan="2">RS-485 key parameters</th></tr>
     <tr><td>Bit rate</td><td>6,000,000 baud</td></tr>
@@ -103,7 +103,7 @@
         <text x="0" y="156" text-anchor="start">0</text><text x="24.6" y="156">2</text><text x="73.8" y="156">6</text><text x="98.5" y="156">8</text><text x="123.1" y="156">10</text>
         <text x="172.3" y="156">14</text><text x="221.5" y="156">18</text><text x="270.8" y="156">22</text><text x="320" y="156" text-anchor="end">26</text>
       </g>
-      <g font-size="7" fill="#777"><text x="0" y="180">Byte offsets shown below each frame. Field details from page 4.</text></g>
+      <g font-size="7" fill="#777"><text x="0" y="180">Byte offsets shown below each frame. Field details from page 5.</text></g>
     </svg>
   </div>
   <div class="foot">
@@ -162,7 +162,34 @@ are no separate enable, mode or parameter messages: everything is expressed in t
   <p>Many USB serial adapters cannot reach 6 Mbaud. An FTDI FT232H-based RS-485 adapter was used for all work in this guide.
   On Linux the rate must be set with the <code>TCSETS2</code>/<code>BOTHER</code> ioctl; set the FTDI latency timer to 1 ms.</p>
 </div>
-<p>Connector pinouts and cable colours are not covered here; they were not examined.</p>
+
+<h2>Wiring</h2>
+<p>A bench motor is driven through the RS-485 accessory kit Unitree sells for its other motors. The figure, from Unitree's
+Motor SDK guide, shows a GO1/B1 motor; a G1 joint plugs in the same way. Cable colours were not examined.</p>
+<figure>
+  <img src="../images/wiring_kit.jpg" alt="Unitree motor accessory kit" style="width:100%">
+  <figcaption>Unitree RS-485 accessory kit. Image: Unitree Robotics.</figcaption>
+</figure>
+<table>
+  <tr><th class="l" style="width:30%">Part</th><th class="l" style="width:22%">Label in the figure</th><th class="l">Connects</th></tr>
+  <tr><td>USB to RS-485 module</td><td>USB转485模块</td><td>USB to the computer</td></tr>
+  <tr><td>3-pin cable</td><td>3P 成品线</td><td>USB module to the power module</td></tr>
+  <tr><td>Power to RS-485 module</td><td>电源转485模块</td><td>Joins the RS-485 pair with the supply; the XT30 input takes the external supply (XT30用户外部供电)</td></tr>
+  <tr><td>No. 9 cable</td><td>9号成品线</td><td>Power module to the motor</td></tr>
+  <tr><td>XT30(2+2) plug</td><td>XT30(2+2)连接</td><td>The motor: two supply pins and the two RS-485 lines</td></tr>
+</table>
+<div class="keep">
+<figure>
+  <img src="../images/motor_connector.png" alt="XT30(2+2) pinout" style="width:40%; display:block; margin:0 auto">
+  <figcaption>Motor XT30(2+2) connector: RS-485 A and B on the signal side, supply &#8722; and + on the power side. Image: Unitree Robotics.</figcaption>
+</figure>
+</div>
+<div class="note">
+  <svg viewBox="0 0 24 24"><path d="M12 3 2 21h20z" fill="none" stroke="#222" stroke-width="1.6"/><path d="M12 10v5M12 17.5v1" stroke="#222" stroke-width="1.8"/></svg>
+  <p>All bench work in this guide used a <b>24 V</b> supply; the robot's bus runs at about 48 V. On 24 V the speed tops out at about
+  39 rotor turns/s, and a hard damping brake from top speed can pull the supply down to about 15 V and latch fault 0x8 (see
+  "Status Word"). Keep the robot's controller off the bus and check the wiring before switching the supply on.</p>
+</div>
 
 <h1 class="pb">RS-485 Communication Protocol</h1>
 
@@ -474,6 +501,7 @@ with MotorBus() as bus:                    # 6 Mbaud; refuses a busy bus
   <tr><td class="c">V0.3</td><td class="c">2026-11-25</td><td>Gear ratios and output-side figures; position scale supported; braking guidance; zero position; SDK joint support.</td></tr>
   <tr><td class="c">V0.4</td><td class="c">2026-11-25</td><td>Robot calibration captured: mode 6 sets the zero; position reading is the joint angle; challenge and response confirmed.</td></tr>
   <tr><td class="c">V0.5</td><td class="c">2026-11-25</td><td>After a full re-test: damping scale corrected to 0.005; robot voltage range corrected; FLAG and sequence byte not required; behaviour when polling stops; stop by switching to idle.</td></tr>
+  <tr><td class="c">V0.6</td><td class="c">2026-11-26</td><td>Wiring: accessory kit, motor connector pinout, 24 V bench supply.</td></tr>
 </table>
 
 </body>

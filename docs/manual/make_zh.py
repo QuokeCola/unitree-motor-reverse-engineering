@@ -14,7 +14,7 @@ svg = re.search(r'(<svg viewBox="0 0 330 232".*?</svg>)', en, re.S).group(1)
 svg = svg.replace('font-family="Liberation Sans, Arial, sans-serif"', 'font-family="Liberation Sans, Noto Sans CJK SC, sans-serif"')
 svg = svg.replace("Command (controller &#8594; motor), 20 bytes", "指令帧（控制器 &#8594; 电机），20 字节")
 svg = svg.replace("Reply (motor &#8594; controller), 26 bytes", "反馈帧（电机 &#8594; 控制器），26 字节")
-svg = svg.replace("Byte offsets shown below each frame. Field details from page 4.", "帧下方数字为字节偏移。各字段说明见第 4 页起。")
+svg = svg.replace("Byte offsets shown below each frame. Field details from page 5.", "帧下方数字为字节偏移。各字段说明见第 5 页起。")
 
 WARN = ('<svg viewBox="0 0 24 24"><path d="M12 3 2 21h20z" fill="none" stroke="#222" stroke-width="1.6"/>'
         '<path d="M12 10v5M12 17.5v1" stroke="#222" stroke-width="1.8"/></svg>')
@@ -25,7 +25,7 @@ body = f"""
   <div class="brand">G1 关节电机</div>
   <div class="title">RS-485 通信协议</div>
   <div class="kind">非官方使用说明</div>
-  <div class="ver"><span>V0.5</span>2026.11</div>
+  <div class="ver"><span>V0.6</span>2026.11</div>
   <table class="key">
     <tr><th class="l" colspan="2">RS-485 关键参数</th></tr>
     <tr><td>波特率</td><td>6,000,000 baud</td></tr>
@@ -94,7 +94,30 @@ body = f"""
   <p>许多 USB 转串口适配器达不到 6 Mbaud。本文档的全部工作使用基于 FTDI FT232H 的 RS-485 适配器。在 Linux 下必须通过
   <code>TCSETS2</code>/<code>BOTHER</code> ioctl 设置该波特率；并把 FTDI 的 latency timer 设为 1 ms。</p>
 </div>
-<p>本文档不包含接插件引脚定义和线色，这些内容未作考察。</p>
+
+<h2>接线</h2>
+<p>台架上的电机通过宇树为其其他电机提供的 RS-485 配件套装驱动。下图取自宇树电机 SDK 开发指南，图中为 GO1/B1 电机；G1 关节电机的接法相同。线色未作考察。</p>
+<figure>
+  <img src="../images/wiring_kit.jpg" alt="宇树电机配件套装" style="width:100%">
+  <figcaption>宇树 RS-485 配件套装。图片来源：宇树科技（Unitree Robotics）。</figcaption>
+</figure>
+<table>
+  <tr><th class="l" style="width:30%">部件</th><th class="l">连接</th></tr>
+  <tr><td>USB 转 485 模块</td><td>USB 接上位机</td></tr>
+  <tr><td>3P 成品线</td><td>连接 USB 模块与电源模块</td></tr>
+  <tr><td>电源转 485 模块</td><td>把 RS-485 信号与电源合到一起；XT30 输入接外部电源</td></tr>
+  <tr><td>9 号成品线</td><td>连接电源模块与电机</td></tr>
+  <tr><td>XT30(2+2) 插头</td><td>接电机：两根电源线和两根 RS-485 信号线</td></tr>
+</table>
+<div class="keep">
+<figure>
+  <img src="../images/motor_connector.png" alt="XT30(2+2) 引脚定义" style="width:55%; display:block; margin:0 auto">
+  <figcaption>电机 XT30(2+2) 接口：信号侧为 RS-485 A、B，电源侧为 &#8722; 和 +。图片来源：宇树科技。</figcaption>
+</figure>
+</div>
+<div class="note">{WARN}
+  <p>本文档的全部台架工作使用 <b>24 V</b> 电源；机器人上的总线电压约为 48 V。在 24 V 下最高转速约为转子每秒 39 圈；从最高速度用大阻尼制动可能把电源电压拉低到约 15 V，并锁存故障 0x8（见“状态字”）。不要把机器人的控制器接在总线上，通电前请检查接线。</p>
+</div>
 
 <h1 class="pb">RS-485 通信协议</h1>
 
@@ -376,6 +399,7 @@ with MotorBus() as bus:                    # 6 Mbaud；总线被占用时拒绝�
   <tr><td class="c">V0.3</td><td class="c">2026-11-25</td><td>减速比及输出轴侧数据；位置比例得到支持；制动建议；零点；SDK 的关节支持。</td></tr>
   <tr><td class="c">V0.4</td><td class="c">2026-11-25</td><td>抓取了机器人的标定过程：模式 6 设置零点；位置读数即关节角度；确认挑战-应答。</td></tr>
   <tr><td class="c">V0.5</td><td class="c">2026-11-25</td><td>全面复测之后：阻尼系数更正为 0.005；更正机器人上的电压范围；FLAG 和序列字节并非必需；停止轮询后的行为；通过切换到空闲模式来停止。</td></tr>
+  <tr><td class="c">V0.6</td><td class="c">2026-11-26</td><td>接线：配件套装、电机接口引脚定义、24 V 台架电源。</td></tr>
 </table>
 """
 
