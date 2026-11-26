@@ -30,6 +30,46 @@ and the same names inside: the library is split into `protocol`, `serial_port`, 
 are `scan`, `zero_torque`, `position_hold` and `sine`. (`python/tools` additionally holds the
 research scripts used to reverse engineer the bus.)
 
+## Wiring
+
+The G1 joint motors use the same RS-485 accessory kit as Unitree's other motors. The photo is
+from Unitree's [Motor SDK accessory kit](https://support.unitree.com/home/en/Motor_SDK_Dev_Guide/accessoryKit)
+page (it shows a GO1/B1 motor; a G1 joint plugs in the same way).
+
+![Unitree motor accessory kit wiring](docs/images/wiring_kit.jpg)
+
+*Image: Unitree Robotics.*
+
+From left to right:
+
+| Part | Photo label | Connects |
+|---|---|---|
+| USB to RS-485 module | USB转485模块 | USB to the computer |
+| 3-pin cable | 3P 成品线 | USB module to the power module |
+| Power to RS-485 module | 电源转485模块 | Joins the RS-485 pair with the supply; the XT30 input takes the external supply (XT30用户外部供电) |
+| No. 9 cable | 9号成品线 | Power module to the motor |
+| XT30(2+2) plug | XT30(2+2)连接 | The motor: two power pins and the two RS-485 lines |
+
+The motor's XT30(2+2) connector, from Unitree's
+[Motor SDK overview](https://support.unitree.com/home/en/Motor_SDK_Dev_Guide/about):
+
+<img src="docs/images/motor_connector.png" alt="XT30(2+2) pinout: RS-485 A and B on the small side, power minus and plus on the large side" width="400">
+
+*Image: Unitree Robotics.* RS-485 `A` and `B` on the signal side; supply `-` and `+` on the
+power side.
+
+**Supply.** Everything in this repository was tested on a **24 V** bench supply. On the robot
+the bus runs at about 48 V. On 24 V:
+
+- The motors top out at about 1,275,000 position counts/s (about 39 rotor turns/s), whatever is
+  commanded.
+- Braking hard from top speed can pull the supply down to about 15 V and latch the
+  under-voltage fault (status `0x8`). Only a power cycle clears it. Stop by going to idle
+  (`disable()`), which does not cause the fault. Details in `docs/lab_notes.md`.
+
+Keep the robot's own controller off the bus. Power on the motors only after you have checked the
+wiring, and keep the joint clear of anything it could hit.
+
 ## One API in three languages
 
 | | Python | C++ | MATLAB |
